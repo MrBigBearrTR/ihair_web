@@ -1,5 +1,6 @@
 import {
   CalendarDays,
+  CalendarRange,
   LayoutDashboard,
   Scissors,
   Settings2,
@@ -9,6 +10,8 @@ import {
   UserRound,
   Users,
   BadgePercent,
+  ChartNoAxesCombined,
+  ShoppingBag,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
@@ -16,77 +19,89 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SheetClose } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { canAccess, type PageKey } from "@/lib/access";
 import { useAuthStore } from "@/stores/authStore";
-import type { Role } from "@/types/domain";
 
 const items: {
   label: string;
   to: string;
   icon: React.ComponentType<{ className?: string }>;
-  roles: Role[];
+  page: PageKey;
 }[] = [
   {
     label: "Panel",
     to: "/dashboard",
     icon: LayoutDashboard,
-    roles: ["ADMIN", "SALON_OWNER", "EMPLOYEE"],
+    page: "dashboard",
   },
   {
     label: "Salonlar",
     to: "/salons",
     icon: Store,
-    roles: ["ADMIN", "SALON_OWNER"],
+    page: "salons",
   },
   {
     label: "Çalışanlar",
     to: "/employees",
     icon: UserRound,
-    roles: ["ADMIN", "SALON_OWNER"],
+    page: "employees",
   },
   {
     label: "Hizmetler",
     to: "/hair-services",
     icon: Scissors,
-    roles: ["ADMIN", "SALON_OWNER"],
+    page: "hairServices",
   },
   {
     label: "Müşteriler",
     to: "/customers",
     icon: Users,
-    roles: ["ADMIN", "SALON_OWNER", "EMPLOYEE"],
+    page: "customers",
   },
   {
     label: "Randevular",
     to: "/appointments",
     icon: CalendarDays,
-    roles: ["ADMIN", "SALON_OWNER", "EMPLOYEE"],
+    page: "appointments",
+  },
+  {
+    label: "Satışlar",
+    to: "/sales/new",
+    icon: ShoppingBag,
+    page: "sales",
+  },
+  {
+    label: "Gelir raporu",
+    to: "/revenue",
+    icon: ChartNoAxesCombined,
+    page: "revenue",
   },
   {
     label: "Kampanyalar",
     to: "/campaigns",
     icon: Tag,
-    roles: ["ADMIN", "SALON_OWNER"],
+    page: "campaigns",
   },
   {
     label: "Kampanya doğrula",
     to: "/campaign-validate",
     icon: BadgePercent,
-    roles: ["ADMIN", "SALON_OWNER", "EMPLOYEE"],
+    page: "campaignValidate",
   },
   {
     label: "Kullanıcılar",
     to: "/users",
     icon: UserCog,
-    roles: ["ADMIN"],
+    page: "users",
   },
 ];
 
 function linkClass({ isActive }: { isActive: boolean }) {
   return cn(
-    "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+    "group flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-all",
     isActive
-      ? "bg-primary text-primary-foreground"
-      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+      ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
+      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
   );
 }
 
@@ -100,7 +115,20 @@ export function NavItems({
   className?: string;
 }) {
   const role = useAuthStore((s) => s.role);
-  const filtered = items.filter((i) => role && i.roles.includes(role));
+  const activeSalonId = useAuthStore((s) => s.activeSalonId);
+  const filtered = [
+    ...items.filter((item) => canAccess(role, item.page)),
+    ...(role === "SALON_OWNER" && activeSalonId != null
+      ? [
+          {
+            label: "Çalışma takvimi",
+            to: `/salons/${activeSalonId}`,
+            icon: CalendarRange,
+            page: "appointments" as PageKey,
+          },
+        ]
+      : []),
+  ];
 
   return (
     <nav className={cn("flex flex-col gap-1", className)}>
@@ -113,7 +141,7 @@ export function NavItems({
               onNavigate?.();
             }}
           >
-            <item.icon className="size-4" />
+            <item.icon className="size-[18px]" />
             {item.label}
           </NavLink>
         );
@@ -132,16 +160,18 @@ export function NavItems({
 
 export function SidebarDesktop() {
   return (
-    <aside className="bg-card hidden w-64 shrink-0 border-r md:flex md:flex-col">
-      <div className="flex h-14 items-center gap-2 px-4">
-        <Settings2 className="text-primary size-5" />
+    <aside className="bg-card/80 hidden w-64 shrink-0 border-r md:flex md:flex-col">
+      <div className="flex h-16 items-center gap-3 px-5">
+        <span className="bg-primary text-primary-foreground flex size-9 items-center justify-center rounded-xl shadow-sm">
+          <Settings2 className="size-5" />
+        </span>
         <div className="leading-tight">
-          <div className="text-sm font-semibold">iHair</div>
-          <div className="text-muted-foreground text-xs">Yönetim</div>
+          <div className="font-semibold tracking-tight">iHair</div>
+          <div className="text-muted-foreground text-xs">Salon yönetimi</div>
         </div>
       </div>
       <Separator />
-      <div className="p-3">
+      <div className="overflow-y-auto p-3">
         <NavItems />
       </div>
     </aside>

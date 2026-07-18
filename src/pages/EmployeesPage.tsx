@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -12,7 +12,6 @@ import {
   listEmployees,
   updateEmployee,
 } from "@/api/employees";
-import { listSalons } from "@/api/salons";
 import { getApiErrorMessage } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,20 +37,22 @@ import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Badge } from "@/components/ui/badge";
 import type { Employee, EmployeeRequest } from "@/types/domain";
+import { useAuthStore } from "@/stores/authStore";
 
 const schema = z.object({
-  salonId: z.coerce.number().min(1, "Salon seçin"),
+  salonId: z.coerce.number().optional(),
   firstName: z.string().min(1, "Ad gerekli"),
   lastName: z.string().min(1, "Soyad gerekli"),
   phone: z.string().optional(),
   email: z.string().optional(),
 });
 
-type FormValues = z.infer<typeof schema>;
+type FormInput = z.input<typeof schema>;
+type FormValues = z.output<typeof schema>;
 
-function toRequest(values: FormValues): EmployeeRequest {
+function toRequest(values: FormValues, salonId: number | undefined): EmployeeRequest {
   return {
-    salonId: values.salonId,
+    salonId: values.salonId ?? salonId,
     firstName: values.firstName,
     lastName: values.lastName,
     phone: values.phone || null,
@@ -61,25 +62,20 @@ function toRequest(values: FormValues): EmployeeRequest {
 
 export function EmployeesPage() {
   const qc = useQueryClient();
-  const [salonFilter, setSalonFilter] = useState<string>("all");
+  const isAdmin = useAuthStore((state) => state.role === "ADMIN");
+  const activeSalonId = useAuthStore((state) => state.activeSalonId);
+  const authorizedSalons = useAuthStore((state) => state.authorizedSalons);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Employee | null>(null);
   const [deleting, setDeleting] = useState<Employee | null>(null);
 
-  const salonsQuery = useQuery({
-    queryKey: ["salons"],
-    queryFn: listSalons,
-  });
-
-  const salonIdNum =
-    salonFilter === "all" ? undefined : Number(salonFilter);
-
   const employeesQuery = useQuery({
-    queryKey: ["employees", salonIdNum],
-    queryFn: () => listEmployees(salonIdNum),
+    queryKey: ["employees", activeSalonId],
+    queryFn: () => listEmployees(activeSalonId ?? undefined),
+    enabled: isAdmin || activeSalonId != null,
   });
 
-  const form = useForm<FormValues>({
+  const form = useForm<FormInput, unknown, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       salonId: 0,
@@ -92,9 +88,8 @@ export function EmployeesPage() {
 
   const resetFor = (emp?: Employee | null) => {
     if (!emp) {
-      const firstSalonId = salonsQuery.data?.[0]?.id ?? 0;
       form.reset({
-        salonId: firstSalonId,
+        salonId: activeSalonId ?? undefined,
         firstName: "",
         lastName: "",
         phone: "",
@@ -113,7 +108,9 @@ export function EmployeesPage() {
 
   const saveMutation = useMutation({
     mutationFn: async (values: FormValues) => {
-      const body = toRequest(values);
+      const targetSalonId = values.salonId ?? activeSalonId ?? undefined;
+      if (!targetSalonId) throw new Error("İşlem için salon seçin");
+      const body = toRequest(values, targetSalonId);
       if (editing) return updateEmployee(editing.id, body);
       return createEmployee(body);
     },
@@ -138,14 +135,14 @@ export function EmployeesPage() {
 
   const rows = useMemo(() => employeesQuery.data ?? [], [employeesQuery.data]);
 
-  useEffect(() => {
-    if (!open || editing) return;
-    const first = salonsQuery.data?.[0]?.id;
-    if (first && !form.getValues("salonId")) {
-      form.setValue("salonId", first, { shouldValidate: true });
-    }
-  }, [open, editing, salonsQuery.data, form]);
-
+  if (authorizedSalons.length === 0) {
+    return (
+      <EmptyState
+        title="Yetkili salon bulunamadı"
+        description="Çalışanları yönetmek için hesabınıza bir salon atanmalıdır."
+      />
+    );
+  }
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -156,24 +153,8 @@ export function EmployeesPage() {
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="grid gap-1">
-            <Label>Salon filtresi</Label>
-            <Select value={salonFilter} onValueChange={setSalonFilter}>
-              <SelectTrigger className="w-full sm:w-[240px]">
-                <SelectValue placeholder="Salon seçin" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tümü</SelectItem>
-                {(salonsQuery.data ?? []).map((s) => (
-                  <SelectItem key={s.id} value={String(s.id)}>
-                    {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
           <Button
-            className="sm:mt-6"
+            disabled={activeSalonId == null}
             onClick={() => {
               setEditing(null);
               resetFor(null);
@@ -223,8 +204,8 @@ export function EmployeesPage() {
                 id: "salon",
                 header: "Salon",
                 cell: (r) => {
-                  const s = salonsQuery.data?.find((x) => x.id === r.salonId);
-                  return s?.name ?? `#${r.salonId}`;
+                  const s = authorizedSalons.find((x) => x.id === r.salonId);
+                  return s?.name ?? `Salon #${r.salonId}`;
                 },
               },
               {
@@ -281,7 +262,7 @@ export function EmployeesPage() {
             className="grid gap-4"
             onSubmit={form.handleSubmit((v) => saveMutation.mutate(v))}
           >
-            <div className="grid gap-2">
+            {isAdmin ? <div className="grid gap-2">
               <Label>Salon</Label>
               <Select
                 value={form.watch("salonId") ? String(form.watch("salonId")) : ""}
@@ -293,7 +274,7 @@ export function EmployeesPage() {
                   <SelectValue placeholder="Salon seçin" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(salonsQuery.data ?? []).map((s) => (
+                  {authorizedSalons.map((s) => (
                     <SelectItem key={s.id} value={String(s.id)}>
                       {s.name}
                     </SelectItem>
@@ -305,7 +286,7 @@ export function EmployeesPage() {
                   {form.formState.errors.salonId.message}
                 </p>
               ) : null}
-            </div>
+            </div> : null}
 
             <div className="grid gap-2 sm:grid-cols-2 sm:gap-4">
               <div className="grid gap-2">
@@ -355,7 +336,7 @@ export function EmployeesPage() {
         open={Boolean(deleting)}
         onOpenChange={(o) => !o && setDeleting(null)}
         title="Çalışanı pasifleştir?"
-        description="Bu işlem çalışanı pasif duruma alır (soft delete)."
+        description="Bu işlem çalışanı pasif duruma alır."
         confirmText="Pasifleştir"
         destructive
         isLoading={deleteMutation.isPending}

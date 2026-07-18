@@ -1,8 +1,10 @@
 import { api } from "@/api/client";
 import type { Customer, CustomerRequest } from "@/types/domain";
 
-export async function listCustomers() {
-  const { data } = await api.get<Customer[]>("/api/customers");
+export async function listCustomers(salonId?: number) {
+  const { data } = await api.get<Customer[]>("/api/customers", {
+    params: salonId != null ? { salonId } : undefined,
+  });
   return data;
 }
 

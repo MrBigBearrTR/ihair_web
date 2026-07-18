@@ -38,10 +38,13 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Badge } from "@/components/ui/badge";
+import { DISCOUNT_TYPE_LABELS } from "@/lib/labels";
 import type { Campaign, CampaignRequest, DiscountType } from "@/types/domain";
+import { useAuthStore } from "@/stores/authStore";
 
 const schema = z
   .object({
+    salonId: z.coerce.number().optional(),
     name: z.string().min(1, "İsim gerekli"),
     discountType: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "FREE_SESSION"]),
     discountValue: z.coerce.number().optional(),
@@ -79,12 +82,14 @@ const schema = z
     }
   });
 
-type FormValues = z.infer<typeof schema>;
+type FormInput = z.input<typeof schema>;
+type FormValues = z.output<typeof schema>;
 
-function toRequest(values: FormValues): CampaignRequest {
+function toRequest(values: FormValues, salonId: number): CampaignRequest {
   const discountValue =
     values.discountType === "FREE_SESSION" ? 0 : Number(values.discountValue ?? 0);
   return {
+    salonId: values.salonId ?? salonId,
     name: values.name,
     discountType: values.discountType as DiscountType,
     discountValue,
@@ -106,24 +111,30 @@ function toLocalDateTimeString(dtLocal: string) {
 
 export function CampaignsPage() {
   const qc = useQueryClient();
+  const isAdmin = useAuthStore((state) => state.role === "ADMIN");
+  const activeSalonId = useAuthStore((state) => state.activeSalonId);
+  const authorizedSalons = useAuthStore((state) => state.authorizedSalons);
   const customersQuery = useQuery({
-    queryKey: ["customers"],
-    queryFn: listCustomers,
+    queryKey: ["customers", activeSalonId],
+    queryFn: () => listCustomers(activeSalonId ?? undefined),
+    enabled: activeSalonId != null,
   });
 
   const campaignsQuery = useQuery({
-    queryKey: ["campaigns"],
-    queryFn: listCampaigns,
+    queryKey: ["campaigns", activeSalonId],
+    queryFn: () => listCampaigns(activeSalonId ?? undefined),
+    enabled: isAdmin || activeSalonId != null,
   });
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Campaign | null>(null);
   const [deleting, setDeleting] = useState<Campaign | null>(null);
 
-  const form = useForm<FormValues>({
+  const form = useForm<FormInput, unknown, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: "",
+      salonId: undefined,
       discountType: "PERCENTAGE",
       discountValue: 10,
       code: "",
@@ -137,10 +148,12 @@ export function CampaignsPage() {
 
   const discountType = form.watch("discountType");
   const isCustomerSpecific = Boolean(form.watch("isCustomerSpecific"));
+  const selectedSalonId = Number(form.watch("salonId")) || 0;
 
   const resetFor = (c?: Campaign | null) => {
     if (!c) {
       form.reset({
+        salonId: activeSalonId ?? undefined,
         name: "",
         discountType: "PERCENTAGE",
         discountValue: 10,
@@ -154,6 +167,7 @@ export function CampaignsPage() {
       return;
     }
     form.reset({
+      salonId: c.salonId,
       name: c.name,
       discountType: c.discountType as DiscountType,
       discountValue: Number(c.discountValue),
@@ -168,7 +182,9 @@ export function CampaignsPage() {
 
   const saveMutation = useMutation({
     mutationFn: async (values: FormValues) => {
-      const body = toRequest(values);
+      const targetSalonId = values.salonId ?? activeSalonId;
+      if (!targetSalonId) throw new Error("İşlem için salon seçin");
+      const body = toRequest(values, targetSalonId);
       if (editing) return updateCampaign(editing.id, body);
       return createCampaign(body);
     },
@@ -195,6 +211,21 @@ export function CampaignsPage() {
   });
 
   const rows = useMemo(() => campaignsQuery.data ?? [], [campaignsQuery.data]);
+  const customerOptions = useMemo(() => {
+    const customers = customersQuery.data ?? [];
+    return isAdmin
+      ? customers.filter((customer) => customer.salonId === selectedSalonId)
+      : customers;
+  }, [customersQuery.data, isAdmin, selectedSalonId]);
+
+  if (authorizedSalons.length === 0) {
+    return (
+      <EmptyState
+        title="Yetkili salon bulunamadı"
+        description="Kampanyaları yönetmek için hesabınıza bir salon atanmalıdır."
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -202,10 +233,12 @@ export function CampaignsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Kampanyalar</h1>
           <p className="text-muted-foreground text-sm">
-            Kod boş bırakılırsa backend <code>IH-XXXXXXXX</code> formatında üretir.
+            Kod boş bırakılırsa sunucu <code>IH-XXXXXXXX</code> formatında üretir.
           </p>
         </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         <Button
+          disabled={activeSalonId == null}
           onClick={() => {
             setEditing(null);
             resetFor(null);
@@ -215,6 +248,7 @@ export function CampaignsPage() {
           <Plus />
           Yeni kampanya
         </Button>
+        </div>
       </div>
 
       <Card>
@@ -250,7 +284,11 @@ export function CampaignsPage() {
               {
                 id: "type",
                 header: "Tip",
-                cell: (r) => <Badge variant="secondary">{r.discountType}</Badge>,
+                cell: (r) => (
+                  <Badge variant="secondary">
+                    {DISCOUNT_TYPE_LABELS[r.discountType]}
+                  </Badge>
+                ),
               },
               {
                 id: "value",
@@ -314,7 +352,7 @@ export function CampaignsPage() {
           <DialogHeader>
             <DialogTitle>{editing ? "Kampanya düzenle" : "Yeni kampanya"}</DialogTitle>
             <DialogDescription>
-              Müşteriye özel kampanyada <code>customerId</code> seçin.
+              Müşteriye özel kampanyalarda aşağıdan müşteri seçin.
             </DialogDescription>
           </DialogHeader>
 
@@ -322,6 +360,29 @@ export function CampaignsPage() {
             className="grid gap-4"
             onSubmit={form.handleSubmit((v) => saveMutation.mutate(v))}
           >
+            {isAdmin ? (
+              <div className="grid gap-2">
+                <Label>Salon</Label>
+                <Select
+                  value={selectedSalonId ? String(selectedSalonId) : ""}
+                  onValueChange={(value) => {
+                    form.setValue("salonId", Number(value), { shouldValidate: true });
+                    form.setValue("customerId", undefined);
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Salon seçin" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {authorizedSalons.map((salon) => (
+                      <SelectItem key={salon.id} value={String(salon.id)}>
+                        {salon.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             <div className="grid gap-2">
               <Label htmlFor="name">Ad</Label>
               <Input id="name" {...form.register("name")} />
@@ -346,9 +407,11 @@ export function CampaignsPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PERCENTAGE">PERCENTAGE</SelectItem>
-                  <SelectItem value="FIXED_AMOUNT">FIXED_AMOUNT</SelectItem>
-                  <SelectItem value="FREE_SESSION">FREE_SESSION</SelectItem>
+                  {Object.entries(DISCOUNT_TYPE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -377,12 +440,12 @@ export function CampaignsPage() {
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="code">Kod (opsiyonel)</Label>
+              <Label htmlFor="code">Kod (isteğe bağlı)</Label>
               <Input id="code" placeholder="Boş bırakırsanız otomatik üretilir" {...form.register("code")} />
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="maxUsageCount">Maks. kullanım (opsiyonel)</Label>
+              <Label htmlFor="maxUsageCount">Azami kullanım (isteğe bağlı)</Label>
               <Input
                 id="maxUsageCount"
                 type="number"
@@ -416,7 +479,7 @@ export function CampaignsPage() {
                     <SelectValue placeholder="Müşteri seçin" />
                   </SelectTrigger>
                   <SelectContent>
-                    {(customersQuery.data ?? []).map((c) => (
+                    {customerOptions.map((c) => (
                       <SelectItem key={c.id} value={String(c.id)}>
                         {c.firstName} {c.lastName}
                       </SelectItem>
@@ -453,7 +516,7 @@ export function CampaignsPage() {
         open={Boolean(deleting)}
         onOpenChange={(o) => !o && setDeleting(null)}
         title="Kampanyayı pasifleştir?"
-        description="Bu işlem kampanyayı pasif duruma alır (soft delete)."
+        description="Bu işlem kampanyayı pasif duruma alır."
         confirmText="Pasifleştir"
         destructive
         isLoading={deleteMutation.isPending}

@@ -10,8 +10,9 @@
 | Müşteri kaydı ve arama | Müşteri listesi + formlar |
 | Randevu oluşturma / durum / iptal | Randevu modülü (çakışma 409 ile API’den gelir) |
 | Kampanya ve indirim kodları | Kampanya yönetimi; çalışanlar için ayrıca **Kampanya doğrula** sayfası |
-| Salon logosu, çalışma saati vb. | Salon detayında key–value ayarlar (`TEXT`, `URL`, `JSON`, `IMAGE_BASE64`) |
-| Yeni sistem kullanıcıları | Sadece **ADMIN**: Kullanıcılar sayfasından `register` |
+| Salon logosu, çalışma saati vb. | Yöneticiye açık salon detayında anahtar–değer ayarları |
+| Yeni sistem kullanıcıları | Sadece **ADMIN**: kullanıcı listesi, salon sahibi için çoklu salon ve varsayılan salon ataması |
+| Randevuda yeni müşteri | Randevu taslağı korunarak müşteri oluşturma ekranına geçiş ve otomatik seçim |
 
 **Kapsam dışı:** Müşteri self-servis paneli yoktur; `CUSTOMER` rolü bu arayüzde ayrı bir deneyim olarak ele alınmamıştır (API tarafındaki yetkiler README’deki backend dokümantasyonuna göredir).
 
@@ -23,12 +24,20 @@
 4. Oturum açıldıktan sonra **sol menü**, hesabınızın rolüne göre otomatik filtrelenir; yetkiniz olmayan bir URL’ye giderseniz **Yetkisiz erişim** sayfasına yönlendirilirsiniz.
 5. **Varsayılan admin** (`admin` / `admin123`) ile ilk girişte uygulama sizi **şifre değiştir** sayfasına yönlendirir; yeni şifreyi kaydettikten sonra oturum kapanır — tekrar giriş yapın.
 
+### Aktif salon kapsamı
+
+- Üst çubuktaki salon alanı tüm operasyon ekranlarının ortak kapsamıdır. Birden fazla salonu olan hesaplar burada salon değiştirebilir; tek salonlu hesaplarda salon salt okunur gösterilir.
+- Seçim kullanıcı bazında tarayıcıda saklanır ve sonraki girişte yalnızca hâlâ yetkili salonlar arasındaysa geri yüklenir.
+- **ADMIN**, üst çubuktan **Tüm salonlar** seçeneğiyle listeleri toplu görüntüleyebilir. Yeni çalışan, hizmet, müşteri, randevu veya kampanya oluşturmak için somut bir salon seçilmelidir.
+- Salon sahibi ve çalışan istekleri aktif `salonId` ile gönderilir. Hesaba salon atanmamışsa salon bağımlı ekranlar işlemleri engelleyip açıklayıcı bir uyarı gösterir.
+- Sol menüdeki **Salonlar** yönetim ekranı yalnızca ADMIN rolüne açıktır; üst çubuktaki seçim salon yönetimi değil, operasyonel şube kapsamıdır.
+
 ### Rol özeti (menü erişimi)
 
 | Rol | Tipik kullanım |
 |-----|----------------|
-| **ADMIN** | Tüm modüller + yeni kullanıcı oluşturma |
-| **SALON_OWNER** | Kendi salon operasyonları: salon/ayarlar, çalışan, hizmet, müşteri, randevu, kampanya |
+| **ADMIN** | Tüm modüller; salon listesi/ayarı ve kullanıcı yönetimi |
+| **SALON_OWNER** | Kendi kapsamındaki çalışan, hizmet, müşteri, randevu ve kampanya işlemleri |
 | **EMPLOYEE** | Müşteri ve randevu; kampanya **doğrulama** (liste/yönetim değil, doğrulama sayfası üzerinden) |
 
 Ayrıntılı endpoint–rol eşlemesi için backend reposundaki `README.md` dosyasına bakın.
@@ -83,6 +92,8 @@ npm run preview   # isteğe bağlı: dist'i lokal önizleme
 - **401 / sürekli çıkış:** Refresh token süresi dolmuş veya şifre değişiminden sonra oturum temizlenmiş olabilir; tekrar giriş yapın.
 - **Şifre değiştir 400:** Backend DTO alan adları farklıysa (ör. `oldPassword` / `newPassword`), [`src/api/auth.ts`](src/api/auth.ts) ve [`src/pages/ChangePasswordPage.tsx`](src/pages/ChangePasswordPage.tsx) içindeki gövdeyi backend ile eşleştirin.
 - **Randevu oluşturulamıyor:** API **409** döndüyse aynı çalışan için aynı saatte başka randevu vardır; mesaj toast ile gösterilir.
+- **Randevu durum güncellemesi:** Arayüz backend sözleşmesine uygun olarak `PATCH /api/appointments/{id}/status` çağrısını kullanır.
+- **Kullanıcı yönetimi:** Liste `GET /api/users`, kayıt `POST /api/auth/register` üzerinden yapılır. Salon sahibi için `salonIds` ve `defaultSalonId` gönderilir; mevcut atamalar `PUT /api/users/{id}/salons` ile güncellenir. Geriye uyumluluk için varsayılan salon ayrıca `salonId` olarak gönderilir.
 - **Kampanya kodu:** Oluştururken kod boş bırakılırsa backend çoğu kurulumda `IH-XXXXXXXX` formatında otomatik kod üretir.
 
 ## Teknik yığın (özet)

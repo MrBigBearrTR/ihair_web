@@ -50,6 +50,10 @@ export function LoginPage() {
         role: data.role,
         expiresAt: data.expiresAt,
         username: values.username,
+        salonId: data.salonId,
+        salonIds: data.salonIds ?? [],
+        salons: data.salons ?? [],
+        employeeId: data.employeeId,
       });
       return { username: values.username };
     },

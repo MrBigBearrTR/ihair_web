@@ -33,7 +33,7 @@ export function AppLayout() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Header onOpenMobileNav={() => setMobileOpen(true)} />
-        <main className="mx-auto w-full max-w-6xl flex-1 p-4 md:p-6">
+        <main className="mx-auto w-full max-w-[1440px] flex-1 p-4 md:p-6 lg:p-8">
           <Outlet />
         </main>
       </div>

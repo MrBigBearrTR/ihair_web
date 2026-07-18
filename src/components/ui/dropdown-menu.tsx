@@ -230,7 +230,6 @@ function DropdownMenuRadioItem({
 
 export {
   DropdownMenu,
-  DropdownMenuPortal,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuGroup,

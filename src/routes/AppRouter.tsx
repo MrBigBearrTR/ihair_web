@@ -16,6 +16,9 @@ import { NotAuthorizedPage } from "@/pages/NotAuthorizedPage";
 import { SalonDetailPage } from "@/pages/SalonDetailPage";
 import { SalonsPage } from "@/pages/SalonsPage";
 import { UsersPage } from "@/pages/UsersPage";
+import { SalesPage } from "@/pages/SalesPage";
+import { RevenuePage } from "@/pages/RevenuePage";
+import { PAGE_ROLES } from "@/lib/access";
 
 export function AppRouter() {
   return (
@@ -24,13 +27,20 @@ export function AppRouter() {
 
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route
+          path="/dashboard"
+          element={
+            <RoleGuard roles={[...PAGE_ROLES.dashboard]}>
+              <DashboardPage />
+            </RoleGuard>
+          }
+        />
         <Route path="/change-password" element={<ChangePasswordPage />} />
 
         <Route
           path="/salons"
           element={
-            <RoleGuard roles={["ADMIN", "SALON_OWNER"]}>
+            <RoleGuard roles={[...PAGE_ROLES.salons]}>
               <SalonsPage />
             </RoleGuard>
           }
@@ -47,7 +57,7 @@ export function AppRouter() {
         <Route
           path="/employees"
           element={
-            <RoleGuard roles={["ADMIN", "SALON_OWNER"]}>
+            <RoleGuard roles={[...PAGE_ROLES.employees]}>
               <EmployeesPage />
             </RoleGuard>
           }
@@ -55,7 +65,7 @@ export function AppRouter() {
         <Route
           path="/hair-services"
           element={
-            <RoleGuard roles={["ADMIN", "SALON_OWNER"]}>
+            <RoleGuard roles={[...PAGE_ROLES.hairServices]}>
               <HairServicesPage />
             </RoleGuard>
           }
@@ -64,7 +74,7 @@ export function AppRouter() {
         <Route
           path="/customers"
           element={
-            <RoleGuard roles={["ADMIN", "SALON_OWNER", "EMPLOYEE"]}>
+            <RoleGuard roles={[...PAGE_ROLES.customers]}>
               <CustomersPage />
             </RoleGuard>
           }
@@ -72,8 +82,24 @@ export function AppRouter() {
         <Route
           path="/appointments"
           element={
-            <RoleGuard roles={["ADMIN", "SALON_OWNER", "EMPLOYEE"]}>
+            <RoleGuard roles={[...PAGE_ROLES.appointments]}>
               <AppointmentsPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/sales/*"
+          element={
+            <RoleGuard roles={[...PAGE_ROLES.sales]}>
+              <SalesPage />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="/revenue"
+          element={
+            <RoleGuard roles={[...PAGE_ROLES.revenue]}>
+              <RevenuePage />
             </RoleGuard>
           }
         />
@@ -81,7 +107,7 @@ export function AppRouter() {
         <Route
           path="/campaigns"
           element={
-            <RoleGuard roles={["ADMIN", "SALON_OWNER"]}>
+            <RoleGuard roles={[...PAGE_ROLES.campaigns]}>
               <CampaignsPage />
             </RoleGuard>
           }
@@ -89,7 +115,7 @@ export function AppRouter() {
         <Route
           path="/campaign-validate"
           element={
-            <RoleGuard roles={["ADMIN", "SALON_OWNER", "EMPLOYEE"]}>
+            <RoleGuard roles={[...PAGE_ROLES.campaignValidate]}>
               <CampaignValidatePage />
             </RoleGuard>
           }
@@ -98,7 +124,7 @@ export function AppRouter() {
         <Route
           path="/users"
           element={
-            <RoleGuard roles={["ADMIN"]}>
+            <RoleGuard roles={[...PAGE_ROLES.users]}>
               <UsersPage />
             </RoleGuard>
           }

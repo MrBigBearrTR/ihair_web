@@ -37,7 +37,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
+import { SalonScheduleManager } from "@/components/salons/SalonScheduleManager";
 import type { SettingType } from "@/types/domain";
+import { SETTING_TYPE_LABELS } from "@/lib/labels";
+import { useAuthStore } from "@/stores/authStore";
 
 const settingSchema = z.object({
   settingKey: z.string().min(1, "Anahtar gerekli"),
@@ -51,6 +54,9 @@ export function SalonDetailPage() {
   const { salonId } = useParams();
   const id = Number(salonId);
   const qc = useQueryClient();
+  const role = useAuthStore((state) => state.role);
+  const activeSalonId = useAuthStore((state) => state.activeSalonId);
+  const isAdmin = role === "ADMIN";
 
   const [open, setOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -59,7 +65,7 @@ export function SalonDetailPage() {
   const salonQuery = useQuery({
     queryKey: ["salon", id],
     queryFn: () => getSalon(id),
-    enabled: Number.isFinite(id),
+    enabled: Number.isFinite(id) && isAdmin,
   });
 
   const settingsQuery = useQuery({
@@ -124,24 +130,35 @@ export function SalonDetailPage() {
     return <div className="text-sm">Geçersiz salon</div>;
   }
 
+  if (role === "SALON_OWNER" && activeSalonId !== id) {
+    return (
+      <EmptyState
+        title="Bu salona erişemezsiniz"
+        description="Çalışma takvimini yalnızca aktif ve yetkili salonunuz için yönetebilirsiniz."
+      />
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
-          <Button variant="ghost" asChild className="-ml-2 w-fit px-2">
-            <Link to="/salons">
-              <ArrowLeft />
-              Salonlara dön
-            </Link>
-          </Button>
+          {isAdmin ? (
+            <Button variant="ghost" asChild className="-ml-2 w-fit px-2">
+              <Link to="/salons">
+                <ArrowLeft />
+                Salonlara dön
+              </Link>
+            </Button>
+          ) : null}
           <h1 className="text-2xl font-semibold tracking-tight">
             {salonQuery.isLoading ? "Yükleniyor…" : salonQuery.data?.name ?? "Salon"}
           </h1>
           <p className="text-muted-foreground text-sm">
-            Salon ayarları (LOGO, WORKING_HOURS vb.) key-value olarak yönetilir.
+            Genel ayarları ve salon çalışma takvimini yönetin.
           </p>
         </div>
-        <Button
+        {isAdmin ? <Button
           onClick={() => {
             setEditingKey(null);
             form.reset({ settingKey: "", settingType: "TEXT", settingValue: "" });
@@ -150,10 +167,12 @@ export function SalonDetailPage() {
         >
           <Plus />
           Yeni ayar
-        </Button>
+        </Button> : null}
       </div>
 
-      <Card>
+      <SalonScheduleManager salonId={id} />
+
+      {isAdmin ? <Card>
         <CardHeader>
           <CardTitle>Ayarlar</CardTitle>
         </CardHeader>
@@ -170,7 +189,11 @@ export function SalonDetailPage() {
             }
             columns={[
               { id: "key", header: "Anahtar", cell: (r) => r.settingKey },
-              { id: "type", header: "Tip", cell: (r) => r.settingType },
+              {
+                id: "type",
+                header: "Tip",
+                cell: (r) => SETTING_TYPE_LABELS[r.settingType],
+              },
               {
                 id: "value",
                 header: "Değer",
@@ -217,7 +240,7 @@ export function SalonDetailPage() {
             ]}
           />
         </CardContent>
-      </Card>
+      </Card> : null}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -262,10 +285,11 @@ export function SalonDetailPage() {
                   <SelectValue placeholder="Tip seçin" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="TEXT">TEXT</SelectItem>
-                  <SelectItem value="URL">URL</SelectItem>
-                  <SelectItem value="JSON">JSON</SelectItem>
-                  <SelectItem value="IMAGE_BASE64">IMAGE_BASE64</SelectItem>
+                  {Object.entries(SETTING_TYPE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

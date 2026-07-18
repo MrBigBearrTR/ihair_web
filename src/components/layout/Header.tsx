@@ -1,4 +1,6 @@
 import { LogOut, Moon, Sun, KeyRound } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useTheme } from "next-themes";
 
@@ -14,10 +16,35 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
+import { ROLE_LABELS } from "@/lib/labels";
+import { listSalons } from "@/api/salons";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useAuthStore } from "@/stores/authStore";
 
 export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { username, role, logout, isLoggingOut } = useAuth();
   const { theme, setTheme } = useTheme();
+  const authorizedSalons = useAuthStore((state) => state.authorizedSalons);
+  const activeSalonId = useAuthStore((state) => state.activeSalonId);
+  const setActiveSalon = useAuthStore((state) => state.setActiveSalon);
+  const setAuthorizedSalons = useAuthStore((state) => state.setAuthorizedSalons);
+  const salonsQuery = useQuery({
+    queryKey: ["salons"],
+    queryFn: listSalons,
+    enabled: role === "ADMIN",
+  });
+
+  useEffect(() => {
+    if (role === "ADMIN" && salonsQuery.data) {
+      setAuthorizedSalons(salonsQuery.data.map(({ id, name }) => ({ id, name })));
+    }
+  }, [role, salonsQuery.data, setAuthorizedSalons]);
 
   const initials =
     (username ?? "?")
@@ -28,7 +55,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       .join("") || "?";
 
   return (
-    <header className="bg-background/80 supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40 flex h-14 items-center gap-3 border-b px-4 backdrop-blur md:px-6">
+    <header className="bg-background/85 supports-[backdrop-filter]:bg-background/70 sticky top-0 z-40 flex h-16 items-center gap-3 border-b px-4 backdrop-blur-xl md:px-6">
       <Button
         variant="outline"
         size="icon-sm"
@@ -42,9 +69,40 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       </Button>
 
       <div className="flex flex-1 items-center justify-end gap-2">
+        {authorizedSalons.length === 0 ? (
+          <span className="text-destructive hidden text-xs sm:inline">
+            Yetkili salon bulunamadı
+          </span>
+        ) : authorizedSalons.length === 1 && role !== "ADMIN" ? (
+          <span className="text-muted-foreground hidden max-w-44 truncate text-sm sm:inline">
+            {authorizedSalons[0].name}
+          </span>
+        ) : (
+          <Select
+            value={activeSalonId == null ? "all" : String(activeSalonId)}
+            onValueChange={(value) =>
+              setActiveSalon(value === "all" ? null : Number(value))
+            }
+          >
+            <SelectTrigger
+              className="h-10 w-[150px] rounded-xl bg-card shadow-xs sm:w-[220px]"
+              aria-label="Aktif salon"
+            >
+              <SelectValue placeholder="Salon seçin" />
+            </SelectTrigger>
+            <SelectContent>
+              {role === "ADMIN" ? <SelectItem value="all">Tüm salonlar</SelectItem> : null}
+              {authorizedSalons.map((salon) => (
+                <SelectItem key={salon.id} value={String(salon.id)}>
+                  {salon.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         {role ? (
           <Badge variant="secondary" className="hidden sm:inline-flex">
-            {role}
+            {ROLE_LABELS[role]}
           </Badge>
         ) : null}
 
@@ -75,7 +133,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <div className="flex flex-col gap-1">
                 <span className="truncate">{username}</span>
                 <span className="text-muted-foreground text-xs font-normal">
-                  {role}
+                  {role ? ROLE_LABELS[role] : ""}
                 </span>
               </div>
             </DropdownMenuLabel>

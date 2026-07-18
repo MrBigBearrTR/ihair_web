@@ -258,7 +258,7 @@ export function SalonsPage() {
         open={Boolean(deleting)}
         onOpenChange={(o) => !o && setDeleting(null)}
         title="Salonu pasifleştir?"
-        description="Bu işlem salonu listede pasif duruma alır (soft delete)."
+        description="Bu işlem salonu listede pasif duruma alır."
         confirmText="Pasifleştir"
         destructive
         isLoading={deleteMutation.isPending}

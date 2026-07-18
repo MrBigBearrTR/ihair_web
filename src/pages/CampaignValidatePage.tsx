@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { formatDateTime } from "@/lib/format";
+import { DISCOUNT_TYPE_LABELS } from "@/lib/labels";
 
 export function CampaignValidatePage() {
   const [code, setCode] = useState("");
@@ -82,7 +83,9 @@ export function CampaignValidatePage() {
                 </div>
                 <div>
                   <span className="text-muted-foreground">Tip: </span>
-                  <span className="font-medium">{result.discountType}</span>
+                  <span className="font-medium">
+                    {DISCOUNT_TYPE_LABELS[result.discountType]}
+                  </span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Değer: </span>

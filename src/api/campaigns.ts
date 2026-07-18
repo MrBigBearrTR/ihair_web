@@ -1,8 +1,10 @@
 import { api } from "@/api/client";
 import type { Campaign, CampaignRequest } from "@/types/domain";
 
-export async function listCampaigns() {
-  const { data } = await api.get<Campaign[]>("/api/campaigns");
+export async function listCampaigns(salonId?: number) {
+  const { data } = await api.get<Campaign[]>("/api/campaigns", {
+    params: salonId != null ? { salonId } : undefined,
+  });
   return data;
 }
 

@@ -31,7 +31,7 @@ async function refreshAccessToken(): Promise<string | null> {
           "/api/auth/refresh",
           { refreshToken } satisfies RefreshRequest,
         );
-        useAuthStore.getState().updateAccessToken(data.accessToken, data.expiresAt);
+        useAuthStore.getState().updateAuth(data);
         return data.accessToken;
       } catch {
         useAuthStore.getState().clearAuth();
@@ -85,10 +85,32 @@ api.interceptors.response.use(
   },
 );
 
-export function getApiErrorMessage(err: unknown, fallback = "Bir hata oluştu") {
+const DEFAULT_ERROR_MESSAGE = "Bir hata oluştu";
+
+function isTurkishMessage(message: string) {
+  return /[çğıöşüÇĞİÖŞÜ]|\b(bir|bu|için|geçersiz|bulunamadı|hata|zaten|gerekli|yetkiniz)\b/i.test(
+    message,
+  );
+}
+
+export function getApiErrorMessage(err: unknown, fallback = DEFAULT_ERROR_MESSAGE) {
   if (axios.isAxiosError<ApiErrorBody>(err)) {
-    return err.response?.data?.message ?? err.message ?? fallback;
+    const message = err.response?.data?.message;
+    if (message && isTurkishMessage(message)) return message;
+    if (!err.response) return "Sunucuya ulaşılamadı. Bağlantınızı kontrol edin.";
+    if (fallback !== DEFAULT_ERROR_MESSAGE) return fallback;
+    const statusMessages: Record<number, string> = {
+      400: "Gönderilen bilgiler geçersiz.",
+      401: "Oturumunuz geçersiz veya süresi dolmuş.",
+      403: "Bu işlem için yetkiniz yok.",
+      404: "İstenen kayıt bulunamadı.",
+      409: "Bu işlem mevcut bir kayıtla çakışıyor.",
+      500: "Sunucuda beklenmeyen bir hata oluştu.",
+    };
+    return statusMessages[err.response.status] ?? fallback;
   }
-  if (err instanceof Error) return err.message;
+  if (err instanceof Error && err.message && isTurkishMessage(err.message)) {
+    return err.message;
+  }
   return fallback;
 }

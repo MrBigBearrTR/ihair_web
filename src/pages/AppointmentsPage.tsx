@@ -1,9 +1,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -11,13 +12,12 @@ import {
   createAppointment,
   deleteAppointment,
   listAppointments,
-  updateAppointment,
+  updateAppointmentStatus,
 } from "@/api/appointments";
 import { validateCampaign } from "@/api/campaigns";
 import { listCustomers } from "@/api/customers";
 import { listEmployees } from "@/api/employees";
 import { listHairServices } from "@/api/hairServices";
-import { listSalons } from "@/api/salons";
 import { getApiErrorMessage } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,8 +42,11 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDebounce } from "@/hooks/useDebounce";
 import { formatDateTime, formatMoney } from "@/lib/format";
+import { APPOINTMENT_STATUS_LABELS, DISCOUNT_TYPE_LABELS } from "@/lib/labels";
+import { useAuthStore } from "@/stores/authStore";
 import type {
   Appointment,
   AppointmentRequest,
@@ -57,6 +60,16 @@ function toLocalDateTimeString(dtLocal: string) {
   const [d, t] = dtLocal.split("T");
   const time = t.length === 5 ? `${t}:00` : t;
   return `${d}T${time}`;
+}
+
+function requiresOutsideHoursConfirmation(error: unknown) {
+  if (!axios.isAxiosError(error) || error.response?.status !== 409) return false;
+  const visit = (value: unknown): boolean => {
+    if (value === "OUTSIDE_WORKING_HOURS_CONFIRMATION_REQUIRED") return true;
+    if (!value || typeof value !== "object") return false;
+    return Object.values(value as Record<string, unknown>).some(visit);
+  };
+  return visit(error.response.data);
 }
 
 function previewFinalPrice(
@@ -78,7 +91,7 @@ function previewFinalPrice(
 }
 
 const createSchema = z.object({
-  salonId: z.coerce.number().min(1, "Salon seçin"),
+  salonId: z.coerce.number().optional(),
   customerId: z.coerce.number().min(1, "Müşteri seçin"),
   employeeId: z.coerce.number().min(1, "Çalışan seçin"),
   hairServiceId: z.coerce.number().min(1, "Hizmet seçin"),
@@ -86,7 +99,8 @@ const createSchema = z.object({
   campaignCode: z.string().optional(),
 });
 
-type CreateForm = z.infer<typeof createSchema>;
+type CreateFormInput = z.input<typeof createSchema>;
+type CreateForm = z.output<typeof createSchema>;
 
 const statusSchema = z.object({
   status: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED"]),
@@ -96,29 +110,38 @@ type StatusForm = z.infer<typeof statusSchema>;
 
 export function AppointmentsPage() {
   const qc = useQueryClient();
-  const [salonFilter, setSalonFilter] = useState<string>("all");
+  const navigate = useNavigate();
+  const location = useLocation();
+  const role = useAuthStore((s) => s.role);
+  const isAdmin = role === "ADMIN";
+  const activeSalonId = useAuthStore((s) => s.activeSalonId);
+  const authorizedSalons = useAuthStore((s) => s.authorizedSalons);
 
   const [openCreate, setOpenCreate] = useState(false);
   const [openStatus, setOpenStatus] = useState(false);
   const [editing, setEditing] = useState<Appointment | null>(null);
   const [deleting, setDeleting] = useState<Appointment | null>(null);
+  const [appointmentView, setAppointmentView] = useState<"active" | "history">(
+    "active",
+  );
+  const [outsideHoursValues, setOutsideHoursValues] = useState<CreateForm | null>(
+    null,
+  );
 
-  const salonsQuery = useQuery({ queryKey: ["salons"], queryFn: listSalons });
   const customersQuery = useQuery({
-    queryKey: ["customers"],
-    queryFn: listCustomers,
+    queryKey: ["customers", activeSalonId],
+    queryFn: () => listCustomers(activeSalonId ?? undefined),
+    enabled: activeSalonId != null,
   });
   const appointmentsQuery = useQuery({
-    queryKey: ["appointments"],
-    queryFn: listAppointments,
+    queryKey: ["appointments", activeSalonId],
+    queryFn: () => listAppointments(activeSalonId ?? undefined),
+    enabled: isAdmin || activeSalonId != null,
   });
 
-  const salonIdForForm = useMemo(() => {
-    if (salonFilter !== "all") return Number(salonFilter);
-    return salonsQuery.data?.[0]?.id ?? 0;
-  }, [salonFilter, salonsQuery.data]);
+  const salonIdForForm = activeSalonId ?? 0;
 
-  const createForm = useForm<CreateForm>({
+  const createForm = useForm<CreateFormInput, unknown, CreateForm>({
     resolver: zodResolver(createSchema),
     defaultValues: {
       salonId: 0,
@@ -135,9 +158,9 @@ export function AppointmentsPage() {
     defaultValues: { status: "PENDING" },
   });
 
-  const watchedSalonId = createForm.watch("salonId");
-  const watchedServiceId = createForm.watch("hairServiceId");
-  const watchedCampaignCode = createForm.watch("campaignCode");
+  const watchedSalonId = Number(createForm.watch("salonId")) || 0;
+  const watchedServiceId = Number(createForm.watch("hairServiceId")) || 0;
+  const watchedCampaignCode = String(createForm.watch("campaignCode") ?? "");
   const debouncedCampaign = useDebounce(watchedCampaignCode ?? "", 400);
 
   const effectiveSalonForLists = watchedSalonId || salonIdForForm;
@@ -186,25 +209,75 @@ export function AppointmentsPage() {
 
   useEffect(() => {
     if (!openCreate) return;
-    const sid = salonFilter !== "all" ? Number(salonFilter) : salonsQuery.data?.[0]?.id;
+    const sid = activeSalonId;
     if (sid) {
       createForm.setValue("salonId", sid, { shouldValidate: true });
     }
-  }, [openCreate, salonFilter, salonsQuery.data, createForm]);
+  }, [openCreate, activeSalonId, createForm]);
+
+  useEffect(() => {
+    const state = location.state as
+      | { resumeAppointment?: boolean; customerId?: number }
+      | null;
+    if (!state?.resumeAppointment) return;
+
+    const rawDraft = sessionStorage.getItem("ihair-appointment-draft");
+    if (rawDraft) {
+      try {
+        const parsed = createSchema.safeParse(JSON.parse(rawDraft));
+        if (parsed.success) createForm.reset(parsed.data);
+      } catch {
+        sessionStorage.removeItem("ihair-appointment-draft");
+      }
+    }
+    if (state.customerId) {
+      createForm.setValue("customerId", state.customerId, { shouldValidate: true });
+      void qc.invalidateQueries({ queryKey: ["customers"] });
+    }
+    setOpenCreate(true);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [createForm, location.pathname, location.state, navigate, qc]);
+
+  const createCustomerForAppointment = () => {
+    sessionStorage.setItem(
+      "ihair-appointment-draft",
+      JSON.stringify(createForm.getValues()),
+    );
+    navigate("/customers", {
+      state: {
+        createForAppointment: true,
+        salonId: effectiveSalonForLists || undefined,
+      },
+    });
+  };
 
   const createMutation = useMutation({
-    mutationFn: async (values: CreateForm) => {
+    mutationFn: async ({
+      values,
+      overrideOutsideWorkingHours,
+      overrideReason,
+    }: {
+      values: CreateForm;
+      overrideOutsideWorkingHours?: boolean;
+      overrideReason?: string;
+    }) => {
+      if (!(values.salonId || activeSalonId)) {
+        throw new Error("İşlem için salon seçin");
+      }
       const body: AppointmentRequest = {
         customerId: values.customerId,
         employeeId: values.employeeId,
         hairServiceId: values.hairServiceId,
         appointmentDateTime: toLocalDateTimeString(values.appointmentDateTime),
         campaignCode: values.campaignCode?.trim() || null,
+        overrideOutsideWorkingHours,
+        overrideReason,
       };
       return createAppointment(body);
     },
     onSuccess: async () => {
       toast.success("Randevu oluşturuldu");
+      sessionStorage.removeItem("ihair-appointment-draft");
       setOpenCreate(false);
       createForm.reset({
         salonId: salonIdForForm,
@@ -216,7 +289,14 @@ export function AppointmentsPage() {
       });
       await qc.invalidateQueries({ queryKey: ["appointments"] });
     },
-    onError: (e) => {
+    onError: (e, variables) => {
+      if (
+        requiresOutsideHoursConfirmation(e) &&
+        !variables.overrideOutsideWorkingHours
+      ) {
+        setOutsideHoursValues(variables.values);
+        return;
+      }
       if (axios.isAxiosError(e) && e.response?.status === 409) {
         toast.error(
           getApiErrorMessage(
@@ -232,13 +312,16 @@ export function AppointmentsPage() {
 
   const statusMutation = useMutation({
     mutationFn: async (payload: { id: number; status: AppointmentStatus }) => {
-      return updateAppointment(payload.id, { status: payload.status });
+      return updateAppointmentStatus(payload.id, { status: payload.status });
     },
-    onSuccess: async () => {
+    onSuccess: async (_, payload) => {
       toast.success("Randevu güncellendi");
       setOpenStatus(false);
       setEditing(null);
       await qc.invalidateQueries({ queryKey: ["appointments"] });
+      if (payload.status === "COMPLETED") {
+        navigate(`/sales/new?appointmentId=${payload.id}`);
+      }
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
@@ -253,18 +336,37 @@ export function AppointmentsPage() {
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
 
-  const rows = useMemo(() => {
-    const all = appointmentsQuery.data ?? [];
-    if (salonFilter === "all") return all;
-    const sid = Number(salonFilter);
-    return all.filter((a) => {
-      const e = a.employee;
-      return e?.salonId === sid;
-    });
-  }, [appointmentsQuery.data, salonFilter]);
+  const activeAppointments = useMemo(
+    () =>
+      (appointmentsQuery.data ?? []).filter(
+        (appointment) =>
+          appointment.status === "PENDING" || appointment.status === "CONFIRMED",
+      ),
+    [appointmentsQuery.data],
+  );
+  const historyAppointments = useMemo(
+    () =>
+      (appointmentsQuery.data ?? []).filter(
+        (appointment) =>
+          appointment.status === "COMPLETED" || appointment.status === "CANCELLED",
+      ),
+    [appointmentsQuery.data],
+  );
+  const rows =
+    appointmentView === "active" ? activeAppointments : historyAppointments;
 
   const employeesOptions = employeesScopedQuery.data ?? [];
   const servicesOptions = servicesScopedQuery.data ?? [];
+  const customerOptions = customersQuery.data ?? [];
+
+  if (authorizedSalons.length === 0) {
+    return (
+      <EmptyState
+        title="Yetkili salon bulunamadı"
+        description="Randevuları görüntülemek için hesabınıza bir salon atanmalıdır."
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -272,28 +374,12 @@ export function AppointmentsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Randevular</h1>
           <p className="text-muted-foreground text-sm">
-            Randevu oluştururken çakışmalar otomatik engellenir (409).
+            Aynı çalışanın çakışan randevuları otomatik olarak engellenir.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="grid gap-1">
-            <Label>Liste filtresi (salon)</Label>
-            <Select value={salonFilter} onValueChange={setSalonFilter}>
-              <SelectTrigger className="w-full sm:w-[240px]">
-                <SelectValue placeholder="Salon seçin" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tümü</SelectItem>
-                {(salonsQuery.data ?? []).map((s) => (
-                  <SelectItem key={s.id} value={String(s.id)}>
-                    {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
           <Button
-            className="sm:mt-6"
+            disabled={activeSalonId == null}
             onClick={() => {
               setOpenCreate(true);
             }}
@@ -305,8 +391,25 @@ export function AppointmentsPage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Liste</CardTitle>
+        <CardHeader className="gap-3">
+          <CardTitle>
+            {appointmentView === "active" ? "Aktif randevular" : "Randevu geçmişi"}
+          </CardTitle>
+          <Tabs
+            value={appointmentView}
+            onValueChange={(value) =>
+              setAppointmentView(value as "active" | "history")
+            }
+          >
+            <TabsList className="h-auto">
+              <TabsTrigger value="active">
+                Bekleyen ve onaylananlar ({activeAppointments.length})
+              </TabsTrigger>
+              <TabsTrigger value="history">
+                Tamamlanan ve iptaller ({historyAppointments.length})
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
         </CardHeader>
         <CardContent>
           <DataTable
@@ -316,12 +419,18 @@ export function AppointmentsPage() {
             empty={
               <EmptyState
                 title="Randevu yok"
-                description="Yeni randevu oluşturarak başlayın."
+                description={
+                  appointmentView === "active"
+                    ? "Yeni randevu oluşturarak başlayın."
+                    : "Henüz tamamlanmış veya iptal edilmiş randevu yok."
+                }
                 action={
-                  <Button onClick={() => setOpenCreate(true)}>
-                    <Plus />
-                    Yeni randevu
-                  </Button>
+                  appointmentView === "active" ? (
+                    <Button onClick={() => setOpenCreate(true)}>
+                      <Plus />
+                      Yeni randevu
+                    </Button>
+                  ) : undefined
                 }
               />
             }
@@ -334,40 +443,57 @@ export function AppointmentsPage() {
               {
                 id: "customer",
                 header: "Müşteri",
-                cell: (r) =>
-                  r.customer
-                    ? `${r.customer.firstName} ${r.customer.lastName}`
-                    : `#${r.customerId}`,
+                cell: (r) => r.customerName || "—",
               },
               {
                 id: "employee",
                 header: "Çalışan",
-                cell: (r) =>
-                  r.employee
-                    ? `${r.employee.firstName} ${r.employee.lastName}`
-                    : `#${r.employeeId}`,
+                cell: (r) => r.employeeName || "—",
               },
               {
                 id: "service",
                 header: "Hizmet",
-                cell: (r) => r.hairService?.name ?? `#${r.hairServiceId}`,
+                cell: (r) => r.hairServiceName || "—",
               },
               {
-                id: "price",
-                header: "Tutar",
-                cell: (r) => formatMoney(r.finalPrice ?? undefined),
+                id: "campaign",
+                header: "Kampanya",
+                cell: (r) => r.campaignCode || "—",
+              },
+              {
+                id: "originalPrice",
+                header: "Liste fiyatı",
+                cell: (r) => formatMoney(r.hairServicePrice),
+              },
+              {
+                id: "discount",
+                header: "İndirim",
+                cell: (r) =>
+                  `-${formatMoney(
+                    Math.max(0, Number(r.hairServicePrice) - Number(r.finalPrice)),
+                  )}`,
+              },
+              {
+                id: "finalPrice",
+                header: "Son fiyat",
+                cell: (r) => formatMoney(r.finalPrice),
               },
               {
                 id: "status",
                 header: "Durum",
-                cell: (r) => <Badge variant="secondary">{r.status}</Badge>,
+                cell: (r) => (
+                  <Badge variant="secondary">
+                    {APPOINTMENT_STATUS_LABELS[r.status]}
+                  </Badge>
+                ),
               },
               {
                 id: "actions",
                 header: "",
                 className: "w-[1%] whitespace-nowrap text-right",
-                cell: (r) => (
-                  <div className="flex justify-end gap-2">
+                cell: (r) =>
+                  appointmentView === "active" ? (
+                    <div className="flex justify-end gap-2">
                     <Button
                       size="sm"
                       variant="outline"
@@ -388,8 +514,8 @@ export function AppointmentsPage() {
                       <Trash2 />
                       İptal
                     </Button>
-                  </div>
-                ),
+                    </div>
+                  ) : null,
               },
             ]}
           />
@@ -401,50 +527,61 @@ export function AppointmentsPage() {
           <DialogHeader>
             <DialogTitle>Yeni randevu</DialogTitle>
             <DialogDescription>
-              Kampanya kodu opsiyoneldir. Geçerli kod girildiğinde tahmini tutar
+              Kampanya kodu isteğe bağlıdır. Geçerli kod girildiğinde tahmini tutar
               hesaplanır.
             </DialogDescription>
           </DialogHeader>
 
           <form
             className="grid gap-4"
-            onSubmit={createForm.handleSubmit((v) => createMutation.mutate(v))}
+            onSubmit={createForm.handleSubmit((v) =>
+              createMutation.mutate({ values: v }),
+            )}
           >
-            <div className="grid gap-2">
-              <Label>Salon</Label>
-              <Select
-                value={
-                  createForm.watch("salonId")
-                    ? String(createForm.watch("salonId"))
-                    : ""
-                }
-                onValueChange={(v) => {
-                  const sid = Number(v);
-                  createForm.setValue("salonId", sid, { shouldValidate: true });
-                  createForm.setValue("employeeId", 0, { shouldValidate: true });
-                  createForm.setValue("hairServiceId", 0, { shouldValidate: true });
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Salon seçin" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(salonsQuery.data ?? []).map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {createForm.formState.errors.salonId?.message ? (
-                <p className="text-destructive text-sm">
-                  {createForm.formState.errors.salonId.message}
-                </p>
-              ) : null}
-            </div>
+            {isAdmin ? (
+              <div className="grid gap-2">
+                <Label>Salon</Label>
+                <Select
+                  value={
+                    createForm.watch("salonId")
+                      ? String(createForm.watch("salonId"))
+                      : ""
+                  }
+                  onValueChange={(v) => {
+                    const sid = Number(v);
+                    createForm.setValue("salonId", sid, { shouldValidate: true });
+                    createForm.setValue("customerId", 0, { shouldValidate: true });
+                    createForm.setValue("employeeId", 0, { shouldValidate: true });
+                    createForm.setValue("hairServiceId", 0, { shouldValidate: true });
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Salon seçin" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {authorizedSalons.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
 
             <div className="grid gap-2">
-              <Label>Müşteri</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label>Müşteri</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={createCustomerForAppointment}
+                >
+                  <UserPlus />
+                  Yeni müşteri oluştur
+                </Button>
+              </div>
               <Select
                 value={
                   createForm.watch("customerId")
@@ -459,7 +596,7 @@ export function AppointmentsPage() {
                   <SelectValue placeholder="Müşteri seçin" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(customersQuery.data ?? []).map((c) => (
+                  {customerOptions.map((c) => (
                     <SelectItem key={c.id} value={String(c.id)}>
                       {c.firstName} {c.lastName}
                     </SelectItem>
@@ -550,7 +687,7 @@ export function AppointmentsPage() {
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="campaignCode">Kampanya kodu (opsiyonel)</Label>
+              <Label htmlFor="campaignCode">Kampanya kodu (isteğe bağlı)</Label>
               <Input id="campaignCode" {...createForm.register("campaignCode")} />
               <div className="text-muted-foreground text-xs">
                 Liste fiyatı: <span className="font-medium">{formatMoney(basePrice)}</span>
@@ -560,7 +697,8 @@ export function AppointmentsPage() {
                 {previewCampaign ? (
                   <span>
                     {" "}
-                    ({previewCampaign.discountType} / {String(previewCampaign.discountValue)})
+                    ({DISCOUNT_TYPE_LABELS[previewCampaign.discountType]} /{" "}
+                    {String(previewCampaign.discountValue)})
                   </span>
                 ) : null}
               </div>
@@ -606,10 +744,11 @@ export function AppointmentsPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PENDING">PENDING</SelectItem>
-                  <SelectItem value="CONFIRMED">CONFIRMED</SelectItem>
-                  <SelectItem value="COMPLETED">COMPLETED</SelectItem>
-                  <SelectItem value="CANCELLED">CANCELLED</SelectItem>
+                  {Object.entries(APPOINTMENT_STATUS_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -627,10 +766,28 @@ export function AppointmentsPage() {
       </Dialog>
 
       <ConfirmDialog
+        open={outsideHoursValues != null}
+        onOpenChange={(o) => !o && setOutsideHoursValues(null)}
+        title="Çalışma saatleri dışında randevu"
+        description="Seçtiğiniz tarih ve saat salonun çalışma saatleri dışında veya kapalı bir güne denk geliyor. Bu randevuyu çalışma saatleri dışında oluşturmak istediğinizden emin misiniz?"
+        confirmText="Yine de oluştur"
+        isLoading={createMutation.isPending}
+        onConfirm={async () => {
+          if (!outsideHoursValues) return;
+          await createMutation.mutateAsync({
+            values: outsideHoursValues,
+            overrideOutsideWorkingHours: true,
+            overrideReason: "Kullanıcı çalışma saatleri dışı randevuyu onayladı.",
+          });
+          setOutsideHoursValues(null);
+        }}
+      />
+
+      <ConfirmDialog
         open={Boolean(deleting)}
         onOpenChange={(o) => !o && setDeleting(null)}
         title="Randevuyu iptal et?"
-        description="Bu işlem randevuyu iptal statüsüne alır (soft delete)."
+        description="Bu işlem randevuyu iptal durumuna alır."
         confirmText="İptal et"
         destructive
         isLoading={deleteMutation.isPending}

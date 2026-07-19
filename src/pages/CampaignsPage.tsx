@@ -39,6 +39,7 @@ import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Badge } from "@/components/ui/badge";
 import { DISCOUNT_TYPE_LABELS } from "@/lib/labels";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import type { Campaign, CampaignRequest, DiscountType } from "@/types/domain";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -115,13 +116,14 @@ export function CampaignsPage() {
   const activeSalonId = useAuthStore((state) => state.activeSalonId);
   const authorizedSalons = useAuthStore((state) => state.authorizedSalons);
   const customersQuery = useQuery({
-    queryKey: ["customers", activeSalonId],
+    queryKey: queryKeys.reference.customers(activeSalonId ?? undefined),
     queryFn: () => listCustomers(activeSalonId ?? undefined),
     enabled: activeSalonId != null,
+    staleTime: cacheTimes.reference,
   });
 
   const campaignsQuery = useQuery({
-    queryKey: ["campaigns", activeSalonId],
+    queryKey: queryKeys.campaigns.list(activeSalonId ?? undefined),
     queryFn: () => listCampaigns(activeSalonId ?? undefined),
     enabled: isAdmin || activeSalonId != null,
   });
@@ -195,7 +197,7 @@ export function CampaignsPage() {
       }
       setOpen(false);
       setEditing(null);
-      await qc.invalidateQueries({ queryKey: ["campaigns"] });
+      await qc.invalidateQueries({ queryKey: queryKeys.campaigns.all });
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
@@ -205,7 +207,7 @@ export function CampaignsPage() {
     onSuccess: async () => {
       toast.success("Kampanya pasifleştirildi");
       setDeleting(null);
-      await qc.invalidateQueries({ queryKey: ["campaigns"] });
+      await qc.invalidateQueries({ queryKey: queryKeys.campaigns.all });
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
@@ -348,7 +350,7 @@ export function CampaignsPage() {
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editing ? "Kampanya düzenle" : "Yeni kampanya"}</DialogTitle>
             <DialogDescription>

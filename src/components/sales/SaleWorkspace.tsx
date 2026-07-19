@@ -7,6 +7,7 @@ import {
   Plus,
   Scissors,
   Search,
+  Tag,
   UserPlus,
   UserRound,
   WalletCards,
@@ -15,6 +16,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { z } from "zod";
 
 import { getApiErrorMessage } from "@/api/client";
 import { listCustomers } from "@/api/customers";
@@ -25,13 +27,18 @@ import {
   createSale,
   getSale,
   listAvailableSaleAppointments,
+  quoteSale,
   updateSale,
 } from "@/api/sales";
 import { SelectableTile } from "@/components/sales/SelectableTile";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useDebounce } from "@/hooks/useDebounce";
+import { createClientId } from "@/lib/clientId";
 import { formatMoney } from "@/lib/format";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 import type {
@@ -57,6 +64,53 @@ const paymentOptions = [
 ];
 
 const SALE_DRAFT_KEY = "ihair-sale-draft";
+const draftLineSchema = z.object({
+  key: z.string().min(1),
+  hairServiceId: z.number().int().positive(),
+  serviceName: z.string().min(1),
+  employeeId: z.number().int().nonnegative(),
+  quantity: z.number().int().positive(),
+  unitPrice: z.number().finite().nonnegative(),
+  importedFromAppointment: z.boolean().optional(),
+});
+const saleDraftSchema = z.object({
+  salonId: z.number().int().positive(),
+  customerId: z.number().int().nonnegative().optional(),
+  customerSearch: z.string().optional(),
+  serviceSearch: z.string().optional(),
+  lines: z.array(z.unknown()).optional(),
+  paymentMethod: z.enum(["CASH", "CARD", "BANK_TRANSFER"]).optional(),
+  campaignCode: z.string().optional(),
+  campaignRemoved: z.boolean().optional(),
+});
+
+function readSaleDraft() {
+  try {
+    const rawDraft = sessionStorage.getItem(SALE_DRAFT_KEY);
+    if (!rawDraft) return null;
+
+    const parsedDraft = saleDraftSchema.safeParse(JSON.parse(rawDraft));
+    if (!parsedDraft.success) return null;
+
+    return {
+      ...parsedDraft.data,
+      lines: (parsedDraft.data.lines ?? []).flatMap((line) => {
+        const parsedLine = draftLineSchema.safeParse(line);
+        return parsedLine.success ? [parsedLine.data] : [];
+      }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function clearSaleDraft() {
+  try {
+    sessionStorage.removeItem(SALE_DRAFT_KEY);
+  } catch {
+    // Storage may be unavailable in Safari private mode.
+  }
+}
 
 export function SaleWorkspace({
   saleId,
@@ -80,6 +134,9 @@ export function SaleWorkspace({
   const [serviceSearch, setServiceSearch] = useState("");
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
+  const [campaignInput, setCampaignInput] = useState("");
+  const [campaignOverride, setCampaignOverride] = useState<string | undefined>();
+  const [campaignTouched, setCampaignTouched] = useState(false);
   const [message, setMessage] = useState("");
   const workingSaleIdRef = useRef<number | null>(saleId ?? null);
 
@@ -96,33 +153,25 @@ export function SaleWorkspace({
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
-      const rawDraft = sessionStorage.getItem(SALE_DRAFT_KEY);
-      if (rawDraft) {
-        try {
-          const draft = JSON.parse(rawDraft) as {
-            salonId?: number;
-            customerId?: number;
-            customerSearch?: string;
-            serviceSearch?: string;
-            lines?: DraftLine[];
-            paymentMethod?: PaymentMethod;
-          };
-          if (draft.salonId === activeSalonId) {
-            setCustomerId(draft.customerId ?? 0);
-            setCustomerSearch(draft.customerSearch ?? "");
-            setServiceSearch(draft.serviceSearch ?? "");
-            setLines(Array.isArray(draft.lines) ? draft.lines : []);
-            if (draft.paymentMethod) setPaymentMethod(draft.paymentMethod);
-          }
-        } catch {
-          // Geçersiz taslak, yeni satış akışını engellememelidir.
-        }
+      const draft = readSaleDraft();
+      if (draft?.salonId === activeSalonId) {
+        setCustomerId(draft.customerId ?? 0);
+        setCustomerSearch(draft.customerSearch ?? "");
+        setServiceSearch(draft.serviceSearch ?? "");
+        setLines(draft.lines);
+        if (draft.paymentMethod) setPaymentMethod(draft.paymentMethod);
+        setCampaignInput(draft.campaignCode ?? "");
+        setCampaignOverride(
+          draft.campaignRemoved ? "" : draft.campaignCode?.trim().toUpperCase(),
+        );
       }
       if (routeState.customerId) {
         setCustomerId(routeState.customerId);
-        void qc.invalidateQueries({ queryKey: ["customers"] });
+        void qc.invalidateQueries({
+          queryKey: queryKeys.reference.customers(activeSalonId ?? undefined),
+        });
       }
-      sessionStorage.removeItem(SALE_DRAFT_KEY);
+      clearSaleDraft();
       navigate(`${location.pathname}${location.search}`, {
         replace: true,
         state: null,
@@ -142,29 +191,34 @@ export function SaleWorkspace({
   ]);
 
   const customersQuery = useQuery({
-    queryKey: ["customers", activeSalonId],
+    queryKey: queryKeys.reference.customers(activeSalonId ?? undefined),
     queryFn: () => listCustomers(activeSalonId!),
     enabled: activeSalonId != null,
+    staleTime: cacheTimes.reference,
   });
   const employeesQuery = useQuery({
-    queryKey: ["employees", activeSalonId],
+    queryKey: queryKeys.reference.employees(activeSalonId ?? undefined),
     queryFn: () => listEmployees(activeSalonId!),
     enabled: activeSalonId != null,
+    staleTime: cacheTimes.reference,
   });
   const servicesQuery = useQuery({
-    queryKey: ["hair-services", activeSalonId],
+    queryKey: queryKeys.reference.hairServices(activeSalonId ?? undefined),
     queryFn: () => listHairServices(activeSalonId!),
     enabled: activeSalonId != null,
+    staleTime: cacheTimes.reference,
   });
   const saleQuery = useQuery({
-    queryKey: ["sale", saleId],
+    queryKey: queryKeys.sales.detail(saleId ?? 0),
     queryFn: () => getSale(saleId!),
     enabled: saleId != null,
+    staleTime: cacheTimes.detail,
   });
   const appointmentsQuery = useQuery({
-    queryKey: ["sales", "available-appointments", activeSalonId],
+    queryKey: queryKeys.sales.availableAppointments(activeSalonId ?? 0),
     queryFn: () => listAvailableSaleAppointments(activeSalonId!),
     enabled: activeSalonId != null && appointmentId != null,
+    staleTime: cacheTimes.transactionList,
   });
 
   const sourceKey = saleQuery.data
@@ -194,6 +248,12 @@ export function SaleWorkspace({
               saleQuery.data.sourceAppointmentId != null && index === 0,
           })),
         );
+        setCampaignInput(saleQuery.data.campaignCode ?? "");
+        setCampaignOverride(
+          saleQuery.data.campaignCode ??
+            (saleQuery.data.sourceAppointmentId != null ? "" : undefined),
+        );
+        setCampaignTouched(false);
       } else {
         const appointment = appointmentsQuery.data?.find(
           (item) => item.id === appointmentId,
@@ -207,10 +267,17 @@ export function SaleWorkspace({
               serviceName: appointment.hairServiceName,
               employeeId: appointment.employeeId,
               quantity: 1,
-              unitPrice: Number(appointment.finalPrice),
+              unitPrice: Number(
+                appointment.campaignCode
+                  ? appointment.hairServicePrice
+                  : appointment.finalPrice,
+              ),
               importedFromAppointment: true,
             },
           ]);
+          setCampaignInput(appointment.campaignCode ?? "");
+          setCampaignOverride(undefined);
+          setCampaignTouched(false);
           setMessage("Randevu bilgileri satışa eklendi.");
         } else {
           setMessage(
@@ -225,8 +292,10 @@ export function SaleWorkspace({
     };
   }, [appointmentId, appointmentsQuery.data, saleQuery.data, sourceKey]);
 
+  const debouncedCustomerSearch = useDebounce(customerSearch, 250);
+  const debouncedCampaignInput = useDebounce(campaignInput, 400);
   const customers = useMemo(() => {
-    const query = customerSearch.trim().toLocaleLowerCase("tr-TR");
+    const query = debouncedCustomerSearch.trim().toLocaleLowerCase("tr-TR");
     return (customersQuery.data ?? [])
       .filter((customer) => customer.active)
       .filter((customer) =>
@@ -235,7 +304,7 @@ export function SaleWorkspace({
           .includes(query),
       )
       .slice(0, compact ? 4 : 8);
-  }, [compact, customerSearch, customersQuery.data]);
+  }, [compact, debouncedCustomerSearch, customersQuery.data]);
   const employees = (employeesQuery.data ?? []).filter((employee) => employee.active);
   const services = useMemo(() => {
     const query = serviceSearch.trim().toLocaleLowerCase("tr-TR");
@@ -260,6 +329,63 @@ export function SaleWorkspace({
     lines.length > 0 &&
     lines.every((line) => line.employeeId > 0 && line.quantity > 0);
 
+  const effectiveCampaignCode = campaignTouched
+    ? debouncedCampaignInput.trim().toUpperCase()
+    : campaignOverride;
+  const campaignDebouncing =
+    campaignTouched &&
+    campaignInput.trim().toUpperCase() !== effectiveCampaignCode;
+
+  const sourceAppointmentId =
+    appointmentId ?? saleQuery.data?.sourceAppointmentId ?? null;
+  const saleItems = useMemo(
+    () =>
+      lines
+        .filter((line) => !line.importedFromAppointment)
+        .map(({ hairServiceId, employeeId, quantity }, position) => ({
+          serviceId: hairServiceId,
+          employeeId,
+          quantity,
+          position: sourceAppointmentId != null ? position + 1 : position,
+        })),
+    [lines, sourceAppointmentId],
+  );
+  const quoteRequest = useMemo<SaleRequest | null>(() => {
+    if (!activeSalonId || !canSubmit) return null;
+    return {
+      salonId: activeSalonId,
+      customerId,
+      sourceAppointmentId,
+      currentSaleId: saleId ?? undefined,
+      campaignCode: effectiveCampaignCode,
+      items: saleItems,
+    };
+  }, [
+    activeSalonId,
+    canSubmit,
+    customerId,
+    effectiveCampaignCode,
+    saleId,
+    saleItems,
+    sourceAppointmentId,
+  ]);
+  const quoteQuery = useQuery({
+    queryKey: ["sales", "quote", quoteRequest],
+    queryFn: () => quoteSale(quoteRequest!),
+    enabled: quoteRequest != null && (!saleId || saleQuery.isSuccess),
+    staleTime: 0,
+    retry: false,
+  });
+  const quote = quoteQuery.data;
+  const quotedSubtotal = Number(quote?.subtotal ?? total);
+  const quotedDiscount = Number(quote?.discountAmount ?? 0);
+  const quotedTotal = Number(quote?.totalAmount ?? total);
+  const canSave =
+    canSubmit &&
+    quoteQuery.isSuccess &&
+    !quoteQuery.isFetching &&
+    !campaignDebouncing;
+
   function addService(service: HairService) {
     const defaultEmployee =
       role === "EMPLOYEE" &&
@@ -270,7 +396,7 @@ export function SaleWorkspace({
     setLines((current) => [
       ...current,
       {
-        key: `${service.id}-${crypto.randomUUID()}`,
+        key: `${service.id}-${createClientId()}`,
         hairServiceId: service.id,
         serviceName: service.name,
         employeeId: defaultEmployee,
@@ -283,17 +409,23 @@ export function SaleWorkspace({
 
   function createCustomerForSale() {
     if (!activeSalonId) return;
-    sessionStorage.setItem(
-      SALE_DRAFT_KEY,
-      JSON.stringify({
-        salonId: activeSalonId,
-        customerId,
-        customerSearch,
-        serviceSearch,
-        lines,
-        paymentMethod,
-      }),
-    );
+    try {
+      sessionStorage.setItem(
+        SALE_DRAFT_KEY,
+        JSON.stringify({
+          salonId: activeSalonId,
+          customerId,
+          customerSearch,
+          serviceSearch,
+          lines,
+          paymentMethod,
+          campaignCode: effectiveCampaignCode || undefined,
+          campaignRemoved: effectiveCampaignCode === "",
+        }),
+      );
+    } catch {
+      toast.warning("Satış taslağı bu tarayıcıda saklanamadı.");
+    }
     navigate("/customers", {
       state: { createForSale: true, salonId: activeSalonId },
     });
@@ -307,19 +439,10 @@ export function SaleWorkspace({
       const body: SaleRequest = {
         salonId: activeSalonId,
         customerId,
-        sourceAppointmentId:
-          appointmentId ?? saleQuery.data?.sourceAppointmentId ?? null,
-        items: lines
-          .filter((line) => !line.importedFromAppointment)
-          .map(({ hairServiceId, employeeId, quantity }, position) => ({
-            serviceId: hairServiceId,
-            employeeId,
-            quantity,
-            position:
-              (appointmentId ?? saleQuery.data?.sourceAppointmentId) != null
-                ? position + 1
-                : position,
-          })),
+        sourceAppointmentId,
+        currentSaleId: saleId ?? workingSaleIdRef.current,
+        campaignCode: effectiveCampaignCode,
+        items: saleItems,
       };
       const workingSaleId = saleId ?? workingSaleIdRef.current;
       const sale = workingSaleId
@@ -331,13 +454,30 @@ export function SaleWorkspace({
         payments: [{ method: paymentMethod, amount: Number(sale.totalAmount) }],
       });
     },
-    onSuccess: async (_, mode) => {
+    onSuccess: async (sale, mode) => {
       toast.success(mode === "hold" ? "Satış beklemeye alındı" : "Ödeme tamamlandı");
       setCustomerId(0);
       setLines([]);
+      setCampaignInput("");
+      setCampaignOverride(undefined);
+      setCampaignTouched(false);
       setMessage("");
       workingSaleIdRef.current = saleId ?? null;
-      await qc.invalidateQueries({ queryKey: ["sales"] });
+      qc.setQueryData(queryKeys.sales.detail(sale.id), sale);
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: queryKeys.sales.lists(activeSalonId ?? undefined),
+        }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.sales.availableAppointments(activeSalonId ?? 0),
+        }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.appointments.lists(activeSalonId ?? undefined),
+        }),
+        qc.invalidateQueries({ queryKey: queryKeys.appointments.weeks }),
+        qc.invalidateQueries({ queryKey: queryKeys.campaigns.all }),
+        qc.invalidateQueries({ queryKey: queryKeys.revenue.all }),
+      ]);
       onFinished?.();
     },
     onError: (error) => toast.error(getApiErrorMessage(error)),
@@ -362,7 +502,7 @@ export function SaleWorkspace({
 
   return (
     <section className="space-y-4" aria-label="Yeni satış">
-      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-5">
           <Card>
             <CardHeader className="pb-3">
@@ -396,7 +536,7 @@ export function SaleWorkspace({
               </Button>
               <fieldset>
                 <legend className="sr-only">Müşteriler</legend>
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2 md:grid-cols-2">
                   {customers.map((customer) => (
                     <SelectableTile
                       key={customer.id}
@@ -433,7 +573,7 @@ export function SaleWorkspace({
                 />
               </div>
               {services.length ? (
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2 md:grid-cols-2">
                 {services.map((service) => (
                   <SelectableTile
                     key={service.id}
@@ -469,12 +609,101 @@ export function SaleWorkspace({
             </CardContent>
           </Card>
 
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <span className="bg-primary text-primary-foreground flex size-7 items-center justify-center rounded-full text-sm">
+                  3
+                </span>
+                Kampanya
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-2">
+                <Label htmlFor="saleCampaignCode">Kampanya kodu</Label>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <div className="relative flex-1">
+                    <Tag className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+                    <Input
+                      id="saleCampaignCode"
+                      className="h-11 pl-9 font-mono uppercase"
+                      value={campaignInput}
+                      onChange={(event) => {
+                        setCampaignInput(event.target.value);
+                        setCampaignTouched(true);
+                      }}
+                      placeholder={
+                        sourceAppointmentId
+                          ? "Boşsa randevu kampanyası kullanılır"
+                          : "Kampanya kodu girin"
+                      }
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11"
+                    disabled={!canSubmit || !campaignInput.trim()}
+                    onClick={() => {
+                      setCampaignOverride(campaignInput.trim().toUpperCase());
+                      setCampaignTouched(false);
+                    }}
+                  >
+                    Uygula
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-11"
+                    disabled={!canSubmit}
+                    onClick={() => {
+                      setCampaignInput("");
+                      setCampaignOverride("");
+                      setCampaignTouched(false);
+                    }}
+                  >
+                    Kaldır
+                  </Button>
+                </div>
+              </div>
+              {campaignDebouncing || quoteQuery.isFetching ? (
+                <p className="text-muted-foreground text-sm">Kampanya doğrulanıyor…</p>
+              ) : quoteQuery.isError ? (
+                <p className="text-destructive text-sm">
+                  {getApiErrorMessage(quoteQuery.error, "Kampanya veya satış bilgileri doğrulanamadı.")}
+                </p>
+              ) : quote ? (
+                <div className="bg-muted/40 rounded-xl border p-3 text-sm">
+                  {quote.campaignCode ? (
+                    <>
+                      <p className="font-medium">
+                        {quote.campaignName || "Kampanya"}{" "}
+                        <span className="font-mono">({quote.campaignCode})</span>
+                      </p>
+                      <p className="text-muted-foreground mt-1">
+                        {quote.inheritedFromAppointment
+                          ? "Randevudan devralındı."
+                          : "Satışa uygulandı."}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-muted-foreground">Kampanya uygulanmıyor.</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">
+                  Kampanyayı doğrulamak için müşteri, hizmet ve çalışan seçimlerini tamamlayın.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
           {lines.length ? (
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <span className="bg-primary text-primary-foreground flex size-7 items-center justify-center rounded-full text-sm">
-                    3
+                    4
                   </span>
                   Satış ayrıntıları
                 </CardTitle>
@@ -486,8 +715,8 @@ export function SaleWorkspace({
                     className="bg-muted/40 space-y-3 rounded-xl border p-3"
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="font-medium">{line.serviceName}</p>
+                      <div className="min-w-0">
+                        <p className="break-words font-medium">{line.serviceName}</p>
                         <p className="text-muted-foreground text-sm">
                           {formatMoney(line.unitPrice)} / adet
                         </p>
@@ -548,7 +777,7 @@ export function SaleWorkspace({
                       <legend className="mb-2 text-sm font-medium">
                         Hizmeti veren çalışan
                       </legend>
-                      <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="grid gap-2 md:grid-cols-2">
                         {employees.map((employee) => (
                           <SelectableTile
                             key={employee.id}
@@ -575,7 +804,7 @@ export function SaleWorkspace({
           ) : null}
         </div>
 
-        <aside className="sticky top-20 hidden space-y-4 lg:block">
+        <aside className="sticky top-20 hidden space-y-4 xl:block">
           <SaleSummary
             customerName={
               selectedCustomer
@@ -583,39 +812,42 @@ export function SaleWorkspace({
                 : undefined
             }
             lines={lines}
-            total={total}
+            subtotal={quotedSubtotal}
+            discountAmount={quotedDiscount}
+            total={quotedTotal}
+            campaignName={quote?.campaignName ?? undefined}
             paymentMethod={paymentMethod}
             setPaymentMethod={setPaymentMethod}
-            canSubmit={canSubmit}
+            canSubmit={canSave}
             pending={saveMutation.isPending}
             onSave={(mode) => saveMutation.mutate(mode)}
           />
         </aside>
       </div>
 
-      <div className="bg-background/95 sticky bottom-0 z-20 -mx-4 border-t p-3 backdrop-blur lg:hidden">
-        <div className="mx-auto flex max-w-xl items-center gap-3">
-          <div className="mr-auto">
+      <div className="bg-background/95 sticky bottom-0 z-20 -mx-4 border-t px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur md:-mx-6 xl:hidden">
+        <div className="mx-auto flex max-w-2xl items-center gap-2 sm:gap-3">
+          <div className="mr-auto min-w-0">
             <p className="text-muted-foreground text-xs">Toplam</p>
-            <p className="font-semibold">{formatMoney(total)}</p>
+            <p className="truncate font-semibold">{formatMoney(quotedTotal)}</p>
           </div>
           <Button
             variant="outline"
-            className="h-11"
-            disabled={!canSubmit || saveMutation.isPending}
+            className="h-11 shrink-0"
+            disabled={!canSave || saveMutation.isPending}
             onClick={() => saveMutation.mutate("hold")}
           >
             Beklet
           </Button>
           <Button
-            className="h-11"
-            disabled={!canSubmit || saveMutation.isPending}
+            className="h-11 shrink-0"
+            disabled={!canSave || saveMutation.isPending}
             onClick={() => saveMutation.mutate("complete")}
           >
             Öde
           </Button>
         </div>
-        <fieldset className="mx-auto mt-2 grid max-w-xl grid-cols-3 gap-2">
+        <fieldset className="mx-auto mt-2 grid max-w-2xl grid-cols-3 gap-2">
           <legend className="sr-only">Ödeme yöntemi</legend>
           {paymentOptions.map((option) => (
             <button
@@ -624,7 +856,7 @@ export function SaleWorkspace({
               role="radio"
               aria-checked={paymentMethod === option.value}
               className={cn(
-                "min-h-11 rounded-lg border text-sm font-medium",
+                "min-h-11 min-w-0 rounded-lg border px-1 text-xs font-medium sm:text-sm",
                 paymentMethod === option.value && "border-primary bg-primary/10",
               )}
               onClick={() => setPaymentMethod(option.value)}
@@ -644,7 +876,10 @@ export function SaleWorkspace({
 function SaleSummary({
   customerName,
   lines,
+  subtotal,
+  discountAmount,
   total,
+  campaignName,
   paymentMethod,
   setPaymentMethod,
   canSubmit,
@@ -653,7 +888,10 @@ function SaleSummary({
 }: {
   customerName?: string;
   lines: DraftLine[];
+  subtotal: number;
+  discountAmount: number;
   total: number;
+  campaignName?: string;
   paymentMethod: PaymentMethod;
   setPaymentMethod: (method: PaymentMethod) => void;
   canSubmit: boolean;
@@ -668,7 +906,7 @@ function SaleSummary({
       <CardContent className="space-y-4">
         <div className="text-sm">
           <p className="text-muted-foreground">Müşteri</p>
-          <p className="font-medium">{customerName ?? "Henüz seçilmedi"}</p>
+          <p className="break-words font-medium">{customerName ?? "Henüz seçilmedi"}</p>
         </div>
         <div className="space-y-2 border-y py-3">
           {lines.length ? (
@@ -684,9 +922,23 @@ function SaleSummary({
             <p className="text-muted-foreground text-sm">Hizmet eklenmedi.</p>
           )}
         </div>
-        <div className="flex items-end justify-between">
-          <span className="text-muted-foreground text-sm">Toplam</span>
-          <strong className="text-2xl">{formatMoney(total)}</strong>
+        <div className="space-y-2">
+          <div className="flex justify-between gap-3 text-sm">
+            <span className="text-muted-foreground">Brüt toplam</span>
+            <span>{formatMoney(subtotal)}</span>
+          </div>
+          {discountAmount > 0 ? (
+            <div className="flex justify-between gap-3 text-sm">
+              <span className="text-muted-foreground">
+                İndirim{campaignName ? ` · ${campaignName}` : ""}
+              </span>
+              <span className="text-success">-{formatMoney(discountAmount)}</span>
+            </div>
+          ) : null}
+          <div className="flex items-end justify-between border-t pt-3">
+            <span className="text-muted-foreground text-sm">Net toplam</span>
+            <strong className="text-2xl">{formatMoney(total)}</strong>
+          </div>
         </div>
         <fieldset>
           <legend className="mb-2 text-sm font-medium">Ödeme yöntemi</legend>

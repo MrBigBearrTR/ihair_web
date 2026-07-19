@@ -15,8 +15,25 @@ export type SimpleColumn<T> = {
   id: string;
   header: string;
   className?: string;
+  priority?: "primary" | "secondary" | "detail" | "action";
+  mobileLabel?: string | false;
   cell: (row: T) => ReactNode;
 };
+
+function priorityClass(
+  priority: SimpleColumn<unknown>["priority"],
+  header = false,
+) {
+  if (priority === "secondary") return "hidden sm:table-cell";
+  if (priority === "detail") return "hidden xl:table-cell";
+  if (priority === "action") {
+    return cn(
+      "sticky right-0 bg-card max-sm:static",
+      header ? "z-20" : "z-10",
+    );
+  }
+  return undefined;
+}
 
 export function DataTable<T>({
   rows,
@@ -46,22 +63,40 @@ export function DataTable<T>({
   }
 
   return (
-    <Table>
-      <TableHeader>
+    <Table className="max-sm:block">
+      <TableHeader className="max-sm:hidden">
         <TableRow>
           {columns.map((c) => (
-            <TableHead key={c.id} className={cn(c.className)}>
+            <TableHead
+              key={c.id}
+              className={cn(priorityClass(c.priority, true), c.className)}
+            >
               {c.header}
             </TableHead>
           ))}
         </TableRow>
       </TableHeader>
-      <TableBody>
+      <TableBody className="max-sm:block">
         {rows.map((row) => (
-          <TableRow key={String(getRowId(row))}>
+          <TableRow
+            key={String(getRowId(row))}
+            className="max-sm:mb-3 max-sm:grid max-sm:gap-2 max-sm:rounded-xl max-sm:border max-sm:p-3"
+          >
             {columns.map((c) => (
-              <TableCell key={c.id} className={cn(c.className)}>
-                {c.cell(row)}
+              <TableCell
+                key={c.id}
+                className={cn(
+                  "max-sm:flex max-sm:min-w-0 max-sm:items-start max-sm:justify-between max-sm:gap-3 max-sm:p-0 max-sm:whitespace-normal",
+                  priorityClass(c.priority),
+                  c.className,
+                )}
+              >
+                {c.mobileLabel === false ? null : (
+                  <span className="text-muted-foreground shrink-0 text-xs sm:hidden">
+                    {c.mobileLabel ?? c.header}
+                  </span>
+                )}
+                <div className="min-w-0 max-sm:text-right">{c.cell(row)}</div>
               </TableCell>
             ))}
           </TableRow>

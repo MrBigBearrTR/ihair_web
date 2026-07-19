@@ -6,6 +6,7 @@ import { BrowserRouter } from "react-router-dom";
 import { Toaster } from "sonner";
 
 import App from "@/App";
+import { AppErrorBoundary } from "@/components/common/AppErrorBoundary";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 import "@/index.css";
@@ -15,6 +16,7 @@ const queryClient = new QueryClient({
     queries: {
       retry: 1,
       refetchOnWindowFocus: false,
+      staleTime: 30_000,
     },
   },
 });
@@ -24,10 +26,12 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
         <TooltipProvider>
-          <BrowserRouter>
-            <App />
-            <Toaster richColors closeButton />
-          </BrowserRouter>
+          <AppErrorBoundary>
+            <BrowserRouter>
+              <App />
+              <Toaster richColors closeButton />
+            </BrowserRouter>
+          </AppErrorBoundary>
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>

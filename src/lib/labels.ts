@@ -15,8 +15,9 @@ export const ROLE_LABELS: Record<Role, string> = {
 export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
   PENDING: "Bekliyor",
   CONFIRMED: "Onaylandı",
+  ARRIVED: "Geldi",
   COMPLETED: "Tamamlandı",
-  CANCELLED: "İptal edildi",
+  CANCELLED: "İptal",
 };
 
 export const DISCOUNT_TYPE_LABELS: Record<DiscountType, string> = {

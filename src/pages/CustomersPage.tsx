@@ -39,6 +39,7 @@ import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Badge } from "@/components/ui/badge";
 import { useDebounce } from "@/hooks/useDebounce";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import type { Customer, CustomerRequest } from "@/types/domain";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -88,9 +89,10 @@ export function CustomersPage() {
   const [deleting, setDeleting] = useState<Customer | null>(null);
 
   const customersQuery = useQuery({
-    queryKey: ["customers", activeSalonId],
+    queryKey: queryKeys.reference.customers(activeSalonId ?? undefined),
     queryFn: () => listCustomers(activeSalonId ?? undefined),
     enabled: isAdmin || activeSalonId != null,
+    staleTime: cacheTimes.reference,
   });
 
   const form = useForm<FormValues>({
@@ -161,7 +163,14 @@ export function CustomersPage() {
       toast.success(editing ? "Müşteri güncellendi" : "Müşteri oluşturuldu");
       setOpen(false);
       setEditing(null);
-      await qc.invalidateQueries({ queryKey: ["customers"] });
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.customers(customer.salonId),
+        }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.customers(undefined),
+        }),
+      ]);
       if (createForFlow && !editing) {
         returnToFlow(customer.id);
       }
@@ -173,8 +182,16 @@ export function CustomersPage() {
     mutationFn: async (id: number) => deleteCustomer(id),
     onSuccess: async () => {
       toast.success("Müşteri pasifleştirildi");
+      const salonId = deleting?.salonId;
       setDeleting(null);
-      await qc.invalidateQueries({ queryKey: ["customers"] });
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.customers(salonId),
+        }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.customers(undefined),
+        }),
+      ]);
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });

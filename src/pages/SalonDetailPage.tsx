@@ -2,7 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -37,6 +37,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
+import { LogoManagerCard } from "@/components/branding/LogoManagerCard";
 import { SalonScheduleManager } from "@/components/salons/SalonScheduleManager";
 import type { SettingType } from "@/types/domain";
 import { SETTING_TYPE_LABELS } from "@/lib/labels";
@@ -83,7 +84,10 @@ export function SalonDetailPage() {
     },
   });
 
-  const settingType = form.watch("settingType");
+  const settingType = useWatch({
+    control: form.control,
+    name: "settingType",
+  });
 
   const saveMutation = useMutation({
     mutationFn: async (values: SettingForm) => {
@@ -171,6 +175,16 @@ export function SalonDetailPage() {
       </div>
 
       <SalonScheduleManager salonId={id} />
+
+      {isAdmin ? (
+        <LogoManagerCard
+          scope={{
+            type: "salon",
+            salonId: id,
+            salonName: salonQuery.data?.name ?? `Salon #${id}`,
+          }}
+        />
+      ) : null}
 
       {isAdmin ? <Card>
         <CardHeader>
@@ -274,7 +288,7 @@ export function SalonDetailPage() {
             <div className="grid gap-2">
               <Label>Tip</Label>
               <Select
-                value={form.watch("settingType")}
+                value={settingType}
                 onValueChange={(v) =>
                   form.setValue("settingType", v as SettingType, {
                     shouldValidate: true,

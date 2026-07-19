@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { queryKeys } from "@/lib/queryKeys";
 import type {
   SalonHoliday,
   SalonHolidayRequest,
@@ -76,7 +77,7 @@ export function SalonScheduleManager({ salonId }: { salonId: number }) {
     onSuccess: async () => {
       toast.success("Çalışma saatleri kaydedildi");
       await qc.invalidateQueries({ queryKey: ["salon-schedule", salonId] });
-      await qc.invalidateQueries({ queryKey: ["appointment-week"] });
+      await qc.invalidateQueries({ queryKey: queryKeys.appointments.weeks });
     },
     onError: (error) => toast.error(getApiErrorMessage(error)),
   });
@@ -92,7 +93,7 @@ export function SalonScheduleManager({ salonId }: { salonId: number }) {
       setEditingHoliday(null);
       setHolidayForm(emptyHoliday);
       await qc.invalidateQueries({ queryKey: ["salon-schedule", salonId] });
-      await qc.invalidateQueries({ queryKey: ["appointment-week"] });
+      await qc.invalidateQueries({ queryKey: queryKeys.appointments.weeks });
     },
     onError: (error) => toast.error(getApiErrorMessage(error)),
   });
@@ -103,7 +104,7 @@ export function SalonScheduleManager({ salonId }: { salonId: number }) {
       toast.success("Tatil silindi");
       setDeletingHoliday(null);
       await qc.invalidateQueries({ queryKey: ["salon-schedule", salonId] });
-      await qc.invalidateQueries({ queryKey: ["appointment-week"] });
+      await qc.invalidateQueries({ queryKey: queryKeys.appointments.weeks });
     },
     onError: (error) => toast.error(getApiErrorMessage(error)),
   });

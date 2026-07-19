@@ -36,6 +36,7 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Badge } from "@/components/ui/badge";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import type { Employee, EmployeeRequest } from "@/types/domain";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -70,9 +71,10 @@ export function EmployeesPage() {
   const [deleting, setDeleting] = useState<Employee | null>(null);
 
   const employeesQuery = useQuery({
-    queryKey: ["employees", activeSalonId],
+    queryKey: queryKeys.reference.employees(activeSalonId ?? undefined),
     queryFn: () => listEmployees(activeSalonId ?? undefined),
     enabled: isAdmin || activeSalonId != null,
+    staleTime: cacheTimes.reference,
   });
 
   const form = useForm<FormInput, unknown, FormValues>({
@@ -114,11 +116,18 @@ export function EmployeesPage() {
       if (editing) return updateEmployee(editing.id, body);
       return createEmployee(body);
     },
-    onSuccess: async () => {
+    onSuccess: async (employee) => {
       toast.success(editing ? "Çalışan güncellendi" : "Çalışan oluşturuldu");
       setOpen(false);
       setEditing(null);
-      await qc.invalidateQueries({ queryKey: ["employees"] });
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.employees(employee.salonId),
+        }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.employees(undefined),
+        }),
+      ]);
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
@@ -127,8 +136,16 @@ export function EmployeesPage() {
     mutationFn: async (id: number) => deleteEmployee(id),
     onSuccess: async () => {
       toast.success("Çalışan pasifleştirildi");
+      const salonId = deleting?.salonId;
       setDeleting(null);
-      await qc.invalidateQueries({ queryKey: ["employees"] });
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.employees(salonId),
+        }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.employees(undefined),
+        }),
+      ]);
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });

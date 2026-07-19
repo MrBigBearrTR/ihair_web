@@ -4,6 +4,8 @@ import type {
   AppointmentRequest,
   AppointmentStatusRequest,
   AppointmentWeek,
+  AppointmentStatus,
+  PagedResponse,
   SalonHoliday,
   SalonSchedule,
   SalonScheduleDay,
@@ -128,6 +130,28 @@ export async function listAppointments(salonId?: number) {
     params: salonId != null ? { salonId } : undefined,
   });
   return unwrapList(data).map(normalizeAppointment);
+}
+
+export async function listAppointmentsPaged(params: {
+  salonId?: number;
+  status?: AppointmentStatus;
+  active?: boolean;
+  from?: string;
+  to?: string;
+  page: number;
+  size: number;
+}): Promise<PagedResponse<Appointment>> {
+  const { data } = await api.get("/api/appointments/paged", { params });
+  const row = (data ?? {}) as Record<string, unknown>;
+  return {
+    content: unwrapList(row.content).map(normalizeAppointment),
+    page: Number(row.page ?? params.page),
+    size: Number(row.size ?? params.size),
+    totalElements: Number(row.totalElements ?? 0),
+    totalPages: Number(row.totalPages ?? 0),
+    first: Boolean(row.first),
+    last: Boolean(row.last),
+  };
 }
 
 export async function getAppointment(id: number) {

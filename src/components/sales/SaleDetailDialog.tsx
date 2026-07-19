@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTime, formatMoney } from "@/lib/format";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import type { PaymentMethod } from "@/types/domain";
 
 const paymentLabels: Record<PaymentMethod, string> = {
@@ -27,15 +28,16 @@ export function SaleDetailDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const query = useQuery({
-    queryKey: ["sale-detail", saleId],
+    queryKey: queryKeys.sales.detail(saleId ?? 0),
     queryFn: () => getSale(saleId!),
     enabled: saleId != null,
+    staleTime: cacheTimes.detail,
   });
   const sale = query.data;
 
   return (
     <Dialog open={saleId != null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Satış detayı{sale ? ` #${sale.id}` : ""}</DialogTitle>
           <DialogDescription>
@@ -72,6 +74,14 @@ export function SaleDetailDialog({
                   {sale.sourceAppointmentId ? `#${sale.sourceAppointmentId}` : "—"}
                 </dd>
               </div>
+              <div>
+                <dt className="text-muted-foreground">Kampanya</dt>
+                <dd className="font-medium">
+                  {sale.campaignCode
+                    ? `${sale.campaignName || "Kampanya"} (${sale.campaignCode})`
+                    : "—"}
+                </dd>
+              </div>
             </dl>
 
             <section aria-labelledby="sale-services-title">
@@ -80,9 +90,8 @@ export function SaleDetailDialog({
               </h3>
               <div className="divide-y rounded-xl border">
                 {sale.items.map((item, index) => {
-                  const lineTotal =
-                    Number(item.finalPrice) ||
-                    Number(item.unitPrice) * item.quantity;
+                  const lineTotal = Number(item.lineTotal);
+                  const discountShare = Number(item.discountShare);
                   return (
                     <div
                       key={item.id ?? `${item.hairServiceId}-${index}`}
@@ -92,12 +101,20 @@ export function SaleDetailDialog({
                         <p className="font-medium">{item.hairServiceName}</p>
                         <p className="text-muted-foreground">{item.employeeName}</p>
                       </div>
-                      <p className="sm:text-right">
-                        {item.quantity} × {formatMoney(item.unitPrice)}
-                        <span className="ml-2 font-semibold">
-                          {formatMoney(lineTotal)}
-                        </span>
-                      </p>
+                      <div className="space-y-0.5 sm:text-right">
+                        <p>
+                          {item.quantity} × {formatMoney(item.unitPrice)}
+                          <span className="ml-2 font-semibold">
+                            {formatMoney(lineTotal)}
+                          </span>
+                        </p>
+                        {discountShare > 0 ? (
+                          <p className="text-muted-foreground text-xs">
+                            İndirim -{formatMoney(discountShare)} · Net{" "}
+                            {formatMoney(item.netLineTotal)}
+                          </p>
+                        ) : null}
+                      </div>
                     </div>
                   );
                 })}
@@ -125,9 +142,19 @@ export function SaleDetailDialog({
               </div>
             </section>
 
-            <div className="flex items-center justify-between border-t pt-4">
-              <span className="font-medium">Toplam</span>
-              <strong className="text-xl">{formatMoney(sale.totalAmount)}</strong>
+            <div className="space-y-2 border-t pt-4 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Brüt toplam</span>
+                <span>{formatMoney(sale.subtotal)}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">İndirim</span>
+                <span>-{formatMoney(sale.discountAmount)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-medium">Net toplam</span>
+                <strong className="text-xl">{formatMoney(sale.totalAmount)}</strong>
+              </div>
             </div>
           </div>
         )}

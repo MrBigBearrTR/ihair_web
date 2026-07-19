@@ -38,6 +38,7 @@ import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney } from "@/lib/format";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import type { HairService, HairServiceRequest } from "@/types/domain";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -82,9 +83,10 @@ export function HairServicesPage() {
   const [deleting, setDeleting] = useState<HairService | null>(null);
 
   const servicesQuery = useQuery({
-    queryKey: ["hair-services", activeSalonId],
+    queryKey: queryKeys.reference.hairServices(activeSalonId ?? undefined),
     queryFn: () => listHairServices(activeSalonId ?? undefined),
     enabled: isAdmin || activeSalonId != null,
+    staleTime: cacheTimes.reference,
   });
 
   const form = useForm<FormInput, unknown, FormValues>({
@@ -126,11 +128,18 @@ export function HairServicesPage() {
       if (editing) return updateHairService(editing.id, body);
       return createHairService(body);
     },
-    onSuccess: async () => {
+    onSuccess: async (service) => {
       toast.success(editing ? "Hizmet güncellendi" : "Hizmet oluşturuldu");
       setOpen(false);
       setEditing(null);
-      await qc.invalidateQueries({ queryKey: ["hair-services"] });
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.hairServices(service.salonId),
+        }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.hairServices(undefined),
+        }),
+      ]);
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
@@ -139,8 +148,16 @@ export function HairServicesPage() {
     mutationFn: async (id: number) => deleteHairService(id),
     onSuccess: async () => {
       toast.success("Hizmet pasifleştirildi");
+      const salonId = deleting?.salonId;
       setDeleting(null);
-      await qc.invalidateQueries({ queryKey: ["hair-services"] });
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.hairServices(salonId),
+        }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.reference.hairServices(undefined),
+        }),
+      ]);
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });

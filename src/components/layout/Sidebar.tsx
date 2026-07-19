@@ -17,7 +17,8 @@ import { NavLink } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { SheetClose } from "@/components/ui/sheet";
+import { SalonBrandHeader } from "@/components/branding/BrandLogo";
+import type { ActiveSalonBranding } from "@/hooks/useBranding";
 import { cn } from "@/lib/utils";
 import { canAccess, type PageKey } from "@/lib/access";
 import { useAuthStore } from "@/stores/authStore";
@@ -133,10 +134,13 @@ export function NavItems({
   return (
     <nav className={cn("flex flex-col gap-1", className)}>
       {filtered.map((item) => {
-        const inner = (
+        return (
+          <div key={item.to}>
           <NavLink
             to={item.to}
-            className={linkClass}
+            className={(state) =>
+              cn(linkClass(state), mobile && !state.isActive && "text-foreground")
+            }
             onClick={() => {
               onNavigate?.();
             }}
@@ -144,31 +148,22 @@ export function NavItems({
             <item.icon className="size-[18px]" />
             {item.label}
           </NavLink>
-        );
-
-        return mobile ? (
-          <SheetClose key={item.to} asChild>
-            {inner}
-          </SheetClose>
-        ) : (
-          <div key={item.to}>{inner}</div>
+          </div>
         );
       })}
     </nav>
   );
 }
 
-export function SidebarDesktop() {
+export function SidebarDesktop({
+  branding,
+}: {
+  branding: ActiveSalonBranding;
+}) {
   return (
-    <aside className="bg-card/80 hidden w-64 shrink-0 border-r md:flex md:flex-col">
-      <div className="flex h-16 items-center gap-3 px-5">
-        <span className="bg-primary text-primary-foreground flex size-9 items-center justify-center rounded-xl shadow-sm">
-          <Settings2 className="size-5" />
-        </span>
-        <div className="leading-tight">
-          <div className="font-semibold tracking-tight">iHair</div>
-          <div className="text-muted-foreground text-xs">Salon yönetimi</div>
-        </div>
+    <aside className="bg-card/80 hidden w-64 shrink-0 border-r xl:flex xl:flex-col">
+      <div className="flex min-h-20 min-w-0 items-center px-5 py-3">
+        <SalonBrandHeader branding={branding} />
       </div>
       <Separator />
       <div className="overflow-y-auto p-3">
@@ -187,7 +182,7 @@ export function SidebarMobileTrigger({
     <Button
       variant="outline"
       size="icon-sm"
-      className="md:hidden"
+      className="xl:hidden"
       type="button"
       aria-label="Menüyü aç"
       onClick={onOpen}

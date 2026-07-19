@@ -3,6 +3,7 @@ export type Role = "ADMIN" | "SALON_OWNER" | "EMPLOYEE" | "CUSTOMER";
 export type AppointmentStatus =
   | "PENDING"
   | "CONFIRMED"
+  | "ARRIVED"
   | "COMPLETED"
   | "CANCELLED";
 
@@ -80,6 +81,16 @@ export interface ApiErrorBody {
   details?: unknown;
   data?: unknown;
   path?: string;
+}
+
+export interface PagedResponse<T> {
+  content: T[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  first: boolean;
+  last: boolean;
 }
 
 export interface Salon {
@@ -289,6 +300,10 @@ export interface SaleItem {
   quantity: number;
   unitPrice: number | string;
   finalPrice?: number | string;
+  lineTotal: number | string;
+  discountShare: number | string;
+  netLineTotal: number | string;
+  position?: number;
 }
 
 export interface Sale {
@@ -299,11 +314,22 @@ export interface Sale {
   sourceAppointmentId?: number | null;
   status: SaleStatus;
   items: SaleItem[];
+  subtotal: number | string;
+  discountAmount: number | string;
   totalAmount: number | string;
+  campaignId?: number | null;
+  campaignCode?: string | null;
+  campaignName?: string | null;
+  campaignDiscountType?: DiscountType | null;
+  campaignDiscountValue?: number | string | null;
+  campaignAppliedAt?: string | null;
+  notes?: string | null;
   payments?: SalePayment[];
   createdAt: string;
   completedAt?: string | null;
 }
+
+export type SaleListItem = Omit<Sale, "items" | "payments">;
 
 export interface SaleItemRequest {
   serviceId: number;
@@ -316,7 +342,36 @@ export interface SaleRequest {
   salonId: number;
   customerId: number;
   sourceAppointmentId?: number | null;
+  currentSaleId?: number | null;
+  campaignCode?: string | null;
+  notes?: string | null;
   items: SaleItemRequest[];
+}
+
+export interface SaleQuoteItem {
+  serviceId: number;
+  employeeId: number;
+  quantity: number;
+  position: number;
+  unitPrice: number | string;
+  lineTotal: number | string;
+  discountShare: number | string;
+  netLineTotal: number | string;
+  serviceName: string;
+  employeeName: string;
+}
+
+export interface SaleQuote {
+  subtotal: number | string;
+  discountAmount: number | string;
+  totalAmount: number | string;
+  campaignId?: number | null;
+  campaignCode?: string | null;
+  campaignName?: string | null;
+  campaignDiscountType?: DiscountType | null;
+  campaignDiscountValue?: number | string | null;
+  inheritedFromAppointment: boolean;
+  items: SaleQuoteItem[];
 }
 
 export interface SalePayment {
@@ -337,6 +392,8 @@ export interface AvailableSaleAppointment {
   hairServiceName: string;
   employeeId: number;
   employeeName: string;
+  campaignCode?: string | null;
+  hairServicePrice: number | string;
   finalPrice: number | string;
   appointmentDateTime: string;
 }

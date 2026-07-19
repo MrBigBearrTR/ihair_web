@@ -29,7 +29,9 @@ import { Label } from "@/components/ui/label";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
+import { LogoManagerCard } from "@/components/branding/LogoManagerCard";
 import { Badge } from "@/components/ui/badge";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import type { Salon, SalonRequest } from "@/types/domain";
 
 const schema = z.object({
@@ -57,8 +59,9 @@ export function SalonsPage() {
   const [deleting, setDeleting] = useState<Salon | null>(null);
 
   const salonsQuery = useQuery({
-    queryKey: ["salons"],
+    queryKey: queryKeys.reference.salons,
     queryFn: listSalons,
+    staleTime: cacheTimes.reference,
   });
 
   const form = useForm<FormValues>({
@@ -89,7 +92,7 @@ export function SalonsPage() {
       toast.success(editing ? "Salon güncellendi" : "Salon oluşturuldu");
       setOpen(false);
       setEditing(null);
-      await qc.invalidateQueries({ queryKey: ["salons"] });
+      await qc.invalidateQueries({ queryKey: queryKeys.reference.salons });
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
@@ -99,7 +102,7 @@ export function SalonsPage() {
     onSuccess: async () => {
       toast.success("Salon pasifleştirildi");
       setDeleting(null);
-      await qc.invalidateQueries({ queryKey: ["salons"] });
+      await qc.invalidateQueries({ queryKey: queryKeys.reference.salons });
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
@@ -126,6 +129,8 @@ export function SalonsPage() {
           Yeni salon
         </Button>
       </div>
+
+      <LogoManagerCard scope={{ type: "global" }} />
 
       <Card>
         <CardHeader>

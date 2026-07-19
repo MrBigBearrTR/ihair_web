@@ -35,7 +35,8 @@ const gridHeight = (endHour - startHour) * 60 * pixelsPerMinute;
 const statusClasses: Record<AppointmentStatus, string> = {
   PENDING: "border-amber-400/60 bg-amber-100 text-amber-950 dark:bg-amber-950 dark:text-amber-100",
   CONFIRMED: "border-blue-400/60 bg-blue-100 text-blue-950 dark:bg-blue-950 dark:text-blue-100",
-  COMPLETED: "border-emerald-400/60 bg-emerald-100 text-emerald-950 dark:bg-emerald-950 dark:text-emerald-100",
+  ARRIVED: "border-violet-400/60 bg-violet-100 text-violet-950 dark:bg-violet-950 dark:text-violet-100",
+  COMPLETED: "border-success/60 bg-success/15 text-foreground",
   CANCELLED: "border-slate-400/60 bg-slate-100 text-slate-600 line-through dark:bg-slate-900 dark:text-slate-300",
 };
 
@@ -91,7 +92,7 @@ export function WeeklyAppointmentCalendar({
 
   return (
     <>
-      <div className="hidden overflow-x-auto rounded-xl border md:block">
+      <div className="hidden overflow-x-auto rounded-xl border xl:block">
         <div className="min-w-[1050px]">
           <div className="grid grid-cols-[64px_repeat(7,minmax(138px,1fr))] border-b">
             <div className="bg-muted/40" />
@@ -195,7 +196,7 @@ export function WeeklyAppointmentCalendar({
         </div>
       </div>
 
-      <div className="space-y-3 md:hidden">
+      <div className="space-y-3 xl:hidden">
         <div
           className="flex gap-2 overflow-x-auto pb-1"
           role="tablist"

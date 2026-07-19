@@ -1,5 +1,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import axios from "axios";
 import { Pencil, Plus, Trash2, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -11,7 +16,7 @@ import { z } from "zod";
 import {
   createAppointment,
   deleteAppointment,
-  listAppointments,
+  listAppointmentsPaged,
   updateAppointmentStatus,
 } from "@/api/appointments";
 import { validateCampaign } from "@/api/campaigns";
@@ -41,11 +46,13 @@ import {
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
+import { PaginationControls } from "@/components/common/PaginationControls";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDebounce } from "@/hooks/useDebounce";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import { APPOINTMENT_STATUS_LABELS, DISCOUNT_TYPE_LABELS } from "@/lib/labels";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import { useAuthStore } from "@/stores/authStore";
 import type {
   Appointment,
@@ -103,7 +110,7 @@ type CreateFormInput = z.input<typeof createSchema>;
 type CreateForm = z.output<typeof createSchema>;
 
 const statusSchema = z.object({
-  status: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED"]),
+  status: z.enum(["PENDING", "CONFIRMED", "ARRIVED", "COMPLETED", "CANCELLED"]),
 });
 
 type StatusForm = z.infer<typeof statusSchema>;
@@ -124,19 +131,29 @@ export function AppointmentsPage() {
   const [appointmentView, setAppointmentView] = useState<"active" | "history">(
     "active",
   );
+  const [page, setPage] = useState(0);
   const [outsideHoursValues, setOutsideHoursValues] = useState<CreateForm | null>(
     null,
   );
 
   const customersQuery = useQuery({
-    queryKey: ["customers", activeSalonId],
+    queryKey: queryKeys.reference.customers(activeSalonId ?? undefined),
     queryFn: () => listCustomers(activeSalonId ?? undefined),
     enabled: activeSalonId != null,
+    staleTime: cacheTimes.reference,
   });
+  const appointmentFilters = {
+    salonId: activeSalonId ?? undefined,
+    active: appointmentView === "active",
+    page,
+    size: 25,
+  };
   const appointmentsQuery = useQuery({
-    queryKey: ["appointments", activeSalonId],
-    queryFn: () => listAppointments(activeSalonId ?? undefined),
+    queryKey: queryKeys.appointments.list(appointmentFilters),
+    queryFn: () => listAppointmentsPaged(appointmentFilters),
     enabled: isAdmin || activeSalonId != null,
+    placeholderData: keepPreviousData,
+    staleTime: cacheTimes.transactionList,
   });
 
   const salonIdForForm = activeSalonId ?? 0;
@@ -166,14 +183,16 @@ export function AppointmentsPage() {
   const effectiveSalonForLists = watchedSalonId || salonIdForForm;
 
   const employeesScopedQuery = useQuery({
-    queryKey: ["employees", effectiveSalonForLists],
+    queryKey: queryKeys.reference.employees(effectiveSalonForLists),
     queryFn: () => listEmployees(effectiveSalonForLists),
     enabled: openCreate && effectiveSalonForLists > 0,
+    staleTime: cacheTimes.reference,
   });
   const servicesScopedQuery = useQuery({
-    queryKey: ["hair-services", effectiveSalonForLists],
+    queryKey: queryKeys.reference.hairServices(effectiveSalonForLists),
     queryFn: () => listHairServices(effectiveSalonForLists),
     enabled: openCreate && effectiveSalonForLists > 0,
+    staleTime: cacheTimes.reference,
   });
 
   const selectedService = useMemo(() => {
@@ -232,11 +251,13 @@ export function AppointmentsPage() {
     }
     if (state.customerId) {
       createForm.setValue("customerId", state.customerId, { shouldValidate: true });
-      void qc.invalidateQueries({ queryKey: ["customers"] });
+      void qc.invalidateQueries({
+        queryKey: queryKeys.reference.customers(activeSalonId ?? undefined),
+      });
     }
     setOpenCreate(true);
     navigate(location.pathname, { replace: true, state: null });
-  }, [createForm, location.pathname, location.state, navigate, qc]);
+  }, [activeSalonId, createForm, location.pathname, location.state, navigate, qc]);
 
   const createCustomerForAppointment = () => {
     sessionStorage.setItem(
@@ -287,7 +308,12 @@ export function AppointmentsPage() {
         appointmentDateTime: "",
         campaignCode: "",
       });
-      await qc.invalidateQueries({ queryKey: ["appointments"] });
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: queryKeys.appointments.lists(activeSalonId ?? undefined),
+        }),
+        qc.invalidateQueries({ queryKey: queryKeys.appointments.weeks }),
+      ]);
     },
     onError: (e, variables) => {
       if (
@@ -314,12 +340,20 @@ export function AppointmentsPage() {
     mutationFn: async (payload: { id: number; status: AppointmentStatus }) => {
       return updateAppointmentStatus(payload.id, { status: payload.status });
     },
-    onSuccess: async (_, payload) => {
+    onSuccess: async (appointment, payload) => {
       toast.success("Randevu güncellendi");
       setOpenStatus(false);
       setEditing(null);
-      await qc.invalidateQueries({ queryKey: ["appointments"] });
-      if (payload.status === "COMPLETED") {
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: queryKeys.appointments.lists(activeSalonId ?? undefined),
+        }),
+        qc.invalidateQueries({ queryKey: queryKeys.appointments.weeks }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.sales.availableAppointments(appointment.salonId),
+        }),
+      ]);
+      if (payload.status === "ARRIVED") {
         navigate(`/sales/new?appointmentId=${payload.id}`);
       }
     },
@@ -331,29 +365,17 @@ export function AppointmentsPage() {
     onSuccess: async () => {
       toast.success("Randevu iptal edildi");
       setDeleting(null);
-      await qc.invalidateQueries({ queryKey: ["appointments"] });
+      await Promise.all([
+        qc.invalidateQueries({
+          queryKey: queryKeys.appointments.lists(activeSalonId ?? undefined),
+        }),
+        qc.invalidateQueries({ queryKey: queryKeys.appointments.weeks }),
+      ]);
     },
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
 
-  const activeAppointments = useMemo(
-    () =>
-      (appointmentsQuery.data ?? []).filter(
-        (appointment) =>
-          appointment.status === "PENDING" || appointment.status === "CONFIRMED",
-      ),
-    [appointmentsQuery.data],
-  );
-  const historyAppointments = useMemo(
-    () =>
-      (appointmentsQuery.data ?? []).filter(
-        (appointment) =>
-          appointment.status === "COMPLETED" || appointment.status === "CANCELLED",
-      ),
-    [appointmentsQuery.data],
-  );
-  const rows =
-    appointmentView === "active" ? activeAppointments : historyAppointments;
+  const rows = appointmentsQuery.data?.content ?? [];
 
   const employeesOptions = employeesScopedQuery.data ?? [];
   const servicesOptions = servicesScopedQuery.data ?? [];
@@ -397,16 +419,17 @@ export function AppointmentsPage() {
           </CardTitle>
           <Tabs
             value={appointmentView}
-            onValueChange={(value) =>
-              setAppointmentView(value as "active" | "history")
-            }
+            onValueChange={(value) => {
+              setAppointmentView(value as "active" | "history");
+              setPage(0);
+            }}
           >
             <TabsList className="h-auto">
               <TabsTrigger value="active">
-                Bekleyen ve onaylananlar ({activeAppointments.length})
+                Bekleyen, onaylanan ve gelenler
               </TabsTrigger>
               <TabsTrigger value="history">
-                Tamamlanan ve iptaller ({historyAppointments.length})
+                Tamamlanan ve iptaller
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -438,36 +461,43 @@ export function AppointmentsPage() {
               {
                 id: "when",
                 header: "Tarih",
+                priority: "primary",
                 cell: (r) => formatDateTime(r.appointmentDateTime),
               },
               {
                 id: "customer",
                 header: "Müşteri",
+                priority: "primary",
                 cell: (r) => r.customerName || "—",
               },
               {
                 id: "employee",
                 header: "Çalışan",
+                priority: "secondary",
                 cell: (r) => r.employeeName || "—",
               },
               {
                 id: "service",
                 header: "Hizmet",
+                priority: "secondary",
                 cell: (r) => r.hairServiceName || "—",
               },
               {
                 id: "campaign",
                 header: "Kampanya",
+                priority: "detail",
                 cell: (r) => r.campaignCode || "—",
               },
               {
                 id: "originalPrice",
                 header: "Liste fiyatı",
+                priority: "detail",
                 cell: (r) => formatMoney(r.hairServicePrice),
               },
               {
                 id: "discount",
                 header: "İndirim",
+                priority: "detail",
                 cell: (r) =>
                   `-${formatMoney(
                     Math.max(0, Number(r.hairServicePrice) - Number(r.finalPrice)),
@@ -476,11 +506,13 @@ export function AppointmentsPage() {
               {
                 id: "finalPrice",
                 header: "Son fiyat",
+                priority: "secondary",
                 cell: (r) => formatMoney(r.finalPrice),
               },
               {
                 id: "status",
                 header: "Durum",
+                priority: "primary",
                 cell: (r) => (
                   <Badge variant="secondary">
                     {APPOINTMENT_STATUS_LABELS[r.status]}
@@ -490,6 +522,8 @@ export function AppointmentsPage() {
               {
                 id: "actions",
                 header: "",
+                priority: "action",
+                mobileLabel: false,
                 className: "w-[1%] whitespace-nowrap text-right",
                 cell: (r) =>
                   appointmentView === "active" ? (
@@ -518,6 +552,13 @@ export function AppointmentsPage() {
                   ) : null,
               },
             ]}
+          />
+          <PaginationControls
+            page={appointmentsQuery.data?.page ?? page}
+            totalPages={appointmentsQuery.data?.totalPages ?? 0}
+            totalElements={appointmentsQuery.data?.totalElements ?? 0}
+            isFetching={appointmentsQuery.isFetching}
+            onPageChange={setPage}
           />
         </CardContent>
       </Card>

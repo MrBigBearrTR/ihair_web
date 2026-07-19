@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   CalendarCheck,
   Clock3,
@@ -8,7 +13,7 @@ import {
   ShoppingBag,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -16,20 +21,21 @@ import { getApiErrorMessage } from "@/api/client";
 import {
   cancelSale,
   listAvailableSaleAppointments,
-  listSales,
+  listSalesPaged,
 } from "@/api/sales";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { DataTable } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
+import { PaginationControls } from "@/components/common/PaginationControls";
 import { SaleWorkspace } from "@/components/sales/SaleWorkspace";
 import { SaleDetailDialog } from "@/components/sales/SaleDetailDialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDateTime, formatMoney } from "@/lib/format";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import { useAuthStore } from "@/stores/authStore";
-import type { PaymentMethod, Sale } from "@/types/domain";
+import type { SaleListItem } from "@/types/domain";
 
 const sections = [
   { value: "new", label: "Yeni satış", icon: Plus },
@@ -37,12 +43,6 @@ const sections = [
   { value: "appointments", label: "Randevulardan getir", icon: CalendarCheck },
   { value: "history", label: "Satış geçmişi", icon: History },
 ] as const;
-
-const paymentLabels: Record<PaymentMethod, string> = {
-  CASH: "Nakit",
-  CARD: "Kart",
-  BANK_TRANSFER: "Havale / EFT",
-};
 
 export function SalesPage() {
   const navigate = useNavigate();
@@ -87,7 +87,13 @@ export function SalesPage() {
 
       {section === "new" ? (
         <SaleWorkspace
-          key={`${activeSalonId ?? "all"}-${saleId ?? appointmentId ?? "new"}`}
+          key={`${activeSalonId ?? "all"}-${
+            saleId != null
+              ? `sale-${saleId}`
+              : appointmentId != null
+                ? `appointment-${appointmentId}`
+                : "new"
+          }`}
           saleId={saleId}
           appointmentId={appointmentId}
           onFinished={() => navigate("/sales/history")}
@@ -109,17 +115,22 @@ export function SalesPage() {
 function PendingSales({ salonId }: { salonId?: number }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [cancelling, setCancelling] = useState<Sale | null>(null);
+  const [page, setPage] = useState(0);
+  const [cancelling, setCancelling] = useState<SaleListItem | null>(null);
+  const filters = { salonId, status: "OPEN" as const, page, size: 25 };
   const query = useQuery({
-    queryKey: ["sales", "OPEN", salonId],
-    queryFn: () => listSales({ salonId, status: "OPEN" }),
+    queryKey: queryKeys.sales.list(filters),
+    queryFn: () => listSalesPaged(filters),
+    placeholderData: keepPreviousData,
+    staleTime: cacheTimes.transactionList,
   });
   const mutation = useMutation({
     mutationFn: cancelSale,
-    onSuccess: async () => {
+    onSuccess: async (sale) => {
       toast.success("Bekleyen satış iptal edildi");
       setCancelling(null);
-      await qc.invalidateQueries({ queryKey: ["sales"] });
+      qc.setQueryData(queryKeys.sales.detail(sale.id), sale);
+      await qc.invalidateQueries({ queryKey: queryKeys.sales.lists(salonId) });
     },
     onError: (error) => toast.error(getApiErrorMessage(error)),
   });
@@ -132,7 +143,7 @@ function PendingSales({ salonId }: { salonId?: number }) {
         </CardHeader>
         <CardContent>
           <DataTable
-            rows={query.data ?? []}
+            rows={query.data?.content ?? []}
             isLoading={query.isLoading}
             getRowId={(row) => row.id}
             empty={
@@ -145,26 +156,26 @@ function PendingSales({ salonId }: { salonId?: number }) {
               {
                 id: "date",
                 header: "Başlangıç",
+                priority: "secondary",
                 cell: (row) => formatDateTime(row.createdAt),
               },
               {
                 id: "customer",
                 header: "Müşteri",
+                priority: "primary",
                 cell: (row) => row.customerName,
-              },
-              {
-                id: "items",
-                header: "Hizmet",
-                cell: (row) => `${row.items.length} kalem`,
               },
               {
                 id: "total",
                 header: "Toplam",
+                priority: "primary",
                 cell: (row) => formatMoney(row.totalAmount),
               },
               {
                 id: "actions",
                 header: "",
+                priority: "action",
+                mobileLabel: false,
                 className: "text-right",
                 cell: (row) => (
                   <div className="flex justify-end gap-2">
@@ -189,6 +200,13 @@ function PendingSales({ salonId }: { salonId?: number }) {
               },
             ]}
           />
+          <PaginationControls
+            page={query.data?.page ?? page}
+            totalPages={query.data?.totalPages ?? 0}
+            totalElements={query.data?.totalElements ?? 0}
+            isFetching={query.isFetching}
+            onPageChange={setPage}
+          />
         </CardContent>
       </Card>
       <ConfirmDialog
@@ -210,9 +228,10 @@ function PendingSales({ salonId }: { salonId?: number }) {
 function AvailableAppointments({ salonId }: { salonId?: number }) {
   const navigate = useNavigate();
   const query = useQuery({
-    queryKey: ["sales", "available-appointments", salonId],
+    queryKey: queryKeys.sales.availableAppointments(salonId ?? 0),
     queryFn: () => listAvailableSaleAppointments(salonId),
     enabled: salonId != null,
+    staleTime: cacheTimes.transactionList,
   });
   return (
     <Card>
@@ -233,34 +252,45 @@ function AvailableAppointments({ salonId }: { salonId?: number }) {
             empty={
               <EmptyState
                 title="Uygun randevu yok"
-                description="Onaylanmış veya tamamlanmış ve henüz satışa dönüşmemiş randevular burada görünür."
+                description="Bekleyen, onaylanan veya gelmiş ve henüz satışa dönüşmemiş randevular burada görünür."
               />
             }
             columns={[
             {
               id: "date",
               header: "Randevu",
+              priority: "secondary",
               cell: (row) => formatDateTime(row.appointmentDateTime),
             },
-            { id: "customer", header: "Müşteri", cell: (row) => row.customerName },
+            {
+              id: "customer",
+              header: "Müşteri",
+              priority: "primary",
+              cell: (row) => row.customerName,
+            },
             {
               id: "service",
               header: "Hizmet",
+              priority: "primary",
               cell: (row) => row.hairServiceName,
             },
             {
               id: "employee",
               header: "Çalışan",
+              priority: "detail",
               cell: (row) => row.employeeName,
             },
             {
               id: "total",
               header: "Tutar",
+              priority: "secondary",
               cell: (row) => formatMoney(row.finalPrice),
             },
             {
               id: "action",
               header: "",
+              priority: "action",
+              mobileLabel: false,
               className: "text-right",
               cell: (row) => (
                 <Button
@@ -281,19 +311,14 @@ function AvailableAppointments({ salonId }: { salonId?: number }) {
 
 function SalesHistory({ salonId }: { salonId?: number }) {
   const [detailId, setDetailId] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
+  const filters = { salonId, status: "COMPLETED" as const, page, size: 25 };
   const query = useQuery({
-    queryKey: ["sales", "COMPLETED", salonId],
-    queryFn: () => listSales({ salonId, status: "COMPLETED" }),
+    queryKey: queryKeys.sales.list(filters),
+    queryFn: () => listSalesPaged(filters),
+    placeholderData: keepPreviousData,
+    staleTime: cacheTimes.transactionList,
   });
-  const rows = useMemo(
-    () =>
-      [...(query.data ?? [])].sort((a, b) =>
-        String(b.completedAt ?? b.createdAt).localeCompare(
-          String(a.completedAt ?? a.createdAt),
-        ),
-      ),
-    [query.data],
-  );
   return (
     <>
     <Card>
@@ -302,7 +327,7 @@ function SalesHistory({ salonId }: { salonId?: number }) {
       </CardHeader>
       <CardContent>
         <DataTable
-          rows={rows}
+          rows={query.data?.content ?? []}
           isLoading={query.isLoading}
           getRowId={(row) => row.id}
           empty={
@@ -315,33 +340,38 @@ function SalesHistory({ salonId }: { salonId?: number }) {
             {
               id: "date",
               header: "Tarih",
+              priority: "secondary",
               cell: (row) => formatDateTime(row.completedAt ?? row.createdAt),
             },
-            { id: "customer", header: "Müşteri", cell: (row) => row.customerName },
             {
-              id: "items",
-              header: "Hizmetler",
-              cell: (row) => row.items.map((item) => item.hairServiceName).join(", "),
+              id: "customer",
+              header: "Müşteri",
+              priority: "primary",
+              cell: (row) => row.customerName,
             },
             {
-              id: "payment",
-              header: "Ödeme",
-              cell: (row) => (
-                <Badge variant="secondary">
-                  {row.payments
-                    ?.map((payment) => paymentLabels[payment.method])
-                    .join(", ") || "—"}
-                </Badge>
-              ),
+              id: "subtotal",
+              header: "Brüt",
+              priority: "detail",
+              cell: (row) => formatMoney(row.subtotal),
+            },
+            {
+              id: "discount",
+              header: "İndirim",
+              priority: "secondary",
+              cell: (row) => `-${formatMoney(row.discountAmount)}`,
             },
             {
               id: "total",
-              header: "Toplam",
+              header: "Net",
+              priority: "primary",
               cell: (row) => formatMoney(row.totalAmount),
             },
             {
               id: "actions",
               header: "",
+              priority: "action",
+              mobileLabel: false,
               className: "text-right",
               cell: (row) => (
                 <Button
@@ -354,6 +384,13 @@ function SalesHistory({ salonId }: { salonId?: number }) {
               ),
             },
           ]}
+        />
+        <PaginationControls
+          page={query.data?.page ?? page}
+          totalPages={query.data?.totalPages ?? 0}
+          totalElements={query.data?.totalElements ?? 0}
+          isFetching={query.isFetching}
+          onPageChange={setPage}
         />
       </CardContent>
     </Card>

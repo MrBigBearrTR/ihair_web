@@ -39,6 +39,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ROLE_LABELS } from "@/lib/labels";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import type { Role, Salon, User } from "@/types/domain";
 
 const schema = z.object({
@@ -150,7 +151,11 @@ function SalonAssignmentFields({
 export function UsersPage() {
   const qc = useQueryClient();
   const usersQuery = useQuery({ queryKey: ["users"], queryFn: listUsers });
-  const salonsQuery = useQuery({ queryKey: ["salons"], queryFn: listSalons });
+  const salonsQuery = useQuery({
+    queryKey: queryKeys.reference.salons,
+    queryFn: listSalons,
+    staleTime: cacheTimes.reference,
+  });
   const [assignmentUser, setAssignmentUser] = useState<User | null>(null);
   const [assignmentSalonIds, setAssignmentSalonIds] = useState<number[]>([]);
   const [assignmentDefaultSalonId, setAssignmentDefaultSalonId] = useState<
@@ -174,8 +179,9 @@ export function UsersPage() {
   const salonIds = form.watch("salonIds");
   const defaultSalonId = form.watch("defaultSalonId");
   const employeesQuery = useQuery({
-    queryKey: ["employees"],
+    queryKey: queryKeys.reference.employees(undefined),
     queryFn: () => listEmployees(),
+    staleTime: cacheTimes.reference,
   });
 
   const mutation = useMutation({

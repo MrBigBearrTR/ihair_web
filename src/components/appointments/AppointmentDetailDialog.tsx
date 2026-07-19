@@ -32,6 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime } from "@/lib/format";
 import { APPOINTMENT_STATUS_LABELS } from "@/lib/labels";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import type {
   AppointmentRequest,
   AppointmentStatus,
@@ -81,26 +82,30 @@ export function AppointmentDetailDialog({
   });
 
   const query = useQuery({
-    queryKey: ["appointment-detail", appointmentId],
+    queryKey: queryKeys.appointments.detail(appointmentId ?? 0),
     queryFn: () => getAppointment(appointmentId!),
     enabled: appointmentId != null,
+    staleTime: cacheTimes.detail,
   });
   const appointment = query.data;
   const salonId = appointment?.salonId;
   const customersQuery = useQuery({
-    queryKey: ["customers", salonId],
+    queryKey: queryKeys.reference.customers(salonId),
     queryFn: () => listCustomers(salonId),
     enabled: editing && salonId != null,
+    staleTime: cacheTimes.reference,
   });
   const employeesQuery = useQuery({
-    queryKey: ["employees", salonId],
+    queryKey: queryKeys.reference.employees(salonId),
     queryFn: () => listEmployees(salonId!),
     enabled: editing && salonId != null,
+    staleTime: cacheTimes.reference,
   });
   const servicesQuery = useQuery({
-    queryKey: ["hair-services", salonId],
+    queryKey: queryKeys.reference.hairServices(salonId),
     queryFn: () => listHairServices(salonId!),
     enabled: editing && salonId != null,
+    staleTime: cacheTimes.reference,
   });
 
   const beginEditing = () => {
@@ -126,9 +131,20 @@ export function AppointmentDetailDialog({
       setPendingOverride(null);
       setEditing(false);
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ["appointment-detail", appointmentId] }),
-        qc.invalidateQueries({ queryKey: ["appointment-week"] }),
-        qc.invalidateQueries({ queryKey: ["appointments"] }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.appointments.detail(appointmentId ?? 0),
+        }),
+        qc.invalidateQueries({ queryKey: queryKeys.appointments.weeks }),
+        qc.invalidateQueries({
+          queryKey: queryKeys.appointments.lists(salonId),
+        }),
+        ...(salonId == null
+          ? []
+          : [
+              qc.invalidateQueries({
+                queryKey: queryKeys.sales.availableAppointments(salonId),
+              }),
+            ]),
       ]);
     },
     onError: (error, variables) => {
@@ -154,7 +170,7 @@ export function AppointmentDetailDialog({
           onOpenChange(open);
         }}
       >
-        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-xl">
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>
               Randevu detayı{appointment ? ` #${appointment.id}` : ""}

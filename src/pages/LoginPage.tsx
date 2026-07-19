@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { login } from "@/api/auth";
 import { getApiErrorMessage } from "@/api/client";
+import { BrandLogo } from "@/components/branding/BrandLogo";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useGlobalBranding } from "@/hooks/useBranding";
 import { useAuthStore } from "@/stores/authStore";
 
 const schema = z.object({
@@ -32,6 +34,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const accessToken = useAuthStore((s) => s.accessToken);
   const setAuth = useAuthStore((s) => s.setAuth);
+  const { logoUrl } = useGlobalBranding();
 
   const from =
     (location.state as { from?: string } | null)?.from ?? "/dashboard";
@@ -77,13 +80,36 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-svh items-center justify-center p-6">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>iHair</CardTitle>
-          <CardDescription>Kuaför yönetim paneline giriş yapın</CardDescription>
-        </CardHeader>
-        <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))}>
+    <div className="flex min-h-svh items-center justify-center bg-linear-to-br from-background via-accent/35 to-secondary/50 p-4 sm:p-6">
+      <Card className="grid w-full max-w-4xl overflow-hidden p-0 md:min-h-[34rem] md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        <section className="from-primary/90 via-accent to-secondary flex min-h-48 items-center justify-center bg-linear-to-br p-8 md:min-h-full md:p-12">
+          <div className="flex max-w-64 flex-col items-center gap-5 text-center">
+            <BrandLogo
+              src={logoUrl}
+              name="iHair"
+              fallback="app"
+              className="size-32 rounded-3xl bg-card/20 text-foreground shadow-lg ring-1 ring-white/25 sm:size-40"
+              imageClassName="p-4"
+            />
+            {!logoUrl ? (
+              <div>
+                <p className="text-3xl font-semibold tracking-tight">iHair</p>
+                <p className="mt-1 text-sm text-foreground/75">
+                  Salon yönetimi
+                </p>
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <form
+          className="flex min-w-0 flex-col justify-center py-8 sm:py-12"
+          onSubmit={form.handleSubmit((v) => mutation.mutate(v))}
+        >
+          <CardHeader>
+            <CardTitle className="text-2xl">Giriş yap</CardTitle>
+            <CardDescription>Kuaför yönetim paneline giriş yapın</CardDescription>
+          </CardHeader>
           <CardContent className="grid gap-4">
             <div className="grid gap-2">
               <Label htmlFor="username">Kullanıcı adı</Label>
@@ -113,8 +139,8 @@ export function LoginPage() {
               ) : null}
             </div>
           </CardContent>
-          <CardFooter>
-            <Button type="submit" disabled={mutation.isPending}>
+          <CardFooter className="mt-6">
+            <Button className="w-full" type="submit" disabled={mutation.isPending}>
               {mutation.isPending ? "Giriş yapılıyor…" : "Giriş yap"}
             </Button>
           </CardFooter>

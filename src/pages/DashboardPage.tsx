@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  MapPinCheck,
 } from "lucide-react";
 import { addWeeks, format, startOfWeek } from "date-fns";
 import { tr } from "date-fns/locale";
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import { useAuthStore } from "@/stores/authStore";
 import { EmptyState } from "@/components/common/EmptyState";
 
@@ -70,9 +72,10 @@ export function DashboardPage() {
   const weekStartKey = format(weekStart, "yyyy-MM-dd");
 
   const weekQuery = useQuery({
-    queryKey: ["appointment-week", activeSalonId, weekStartKey],
+    queryKey: queryKeys.appointments.week(activeSalonId ?? 0, weekStartKey),
     queryFn: () => listAppointmentWeek(activeSalonId!, weekStartKey),
     enabled: activeSalonId != null,
+    staleTime: cacheTimes.appointmentWeek,
   });
   const scheduleQuery = useQuery({
     queryKey: ["salon-schedule", activeSalonId],
@@ -121,7 +124,7 @@ export function DashboardPage() {
       </div>
 
       {weekQuery.isLoading ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <Skeleton className="h-28" />
           <Skeleton className="h-28" />
           <Skeleton className="h-28" />
@@ -146,6 +149,12 @@ export function DashboardPage() {
             value={todayAppointments.filter((item) => item.status === "CONFIRMED").length}
             description="Bugünkü randevular"
             icon={CalendarCheck}
+          />
+          <StatCard
+            title="Gelen"
+            value={todayAppointments.filter((item) => item.status === "ARRIVED").length}
+            description="Bugünkü randevular"
+            icon={MapPinCheck}
           />
           <StatCard
             title="Tamamlanan"

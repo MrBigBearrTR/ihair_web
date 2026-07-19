@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { format, subDays } from "date-fns";
 import {
   Banknote,
@@ -11,8 +11,9 @@ import { useState } from "react";
 
 import { listEmployees } from "@/api/employees";
 import { getRevenueReport } from "@/api/reports";
-import { listSales } from "@/api/sales";
+import { listSalesPaged } from "@/api/sales";
 import { EmptyState } from "@/components/common/EmptyState";
+import { PaginationControls } from "@/components/common/PaginationControls";
 import { SaleDetailDialog } from "@/components/sales/SaleDetailDialog";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/common/DataTable";
@@ -34,6 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatDateTime, formatMoney } from "@/lib/format";
+import { cacheTimes, queryKeys } from "@/lib/queryKeys";
 import { useAuthStore } from "@/stores/authStore";
 import type { RevenueGrouping } from "@/types/domain";
 
@@ -54,13 +56,14 @@ export function RevenuePage() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
   const employeesQuery = useQuery({
-    queryKey: ["employees", activeSalonId],
+    queryKey: queryKeys.reference.employees(activeSalonId ?? undefined),
     queryFn: () => listEmployees(activeSalonId!),
     enabled: activeSalonId != null,
+    staleTime: cacheTimes.reference,
   });
   const reportQuery = useQuery({
     queryKey: [
-      "revenue",
+      ...queryKeys.revenue.all,
       activeSalonId,
       startDate,
       endDate,
@@ -246,6 +249,7 @@ export function RevenuePage() {
         </Card>
       </div>
       <DailySalesDialog
+        key={`${selectedDay ?? "closed"}-${activeSalonId ?? "all"}-${employeeId}`}
         day={selectedDay}
         salonId={activeSalonId ?? undefined}
         employeeId={employeeId === "all" ? undefined : Number(employeeId)}
@@ -267,24 +271,29 @@ function DailySalesDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const [saleId, setSaleId] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
   const normalizedDay = day?.slice(0, 10) ?? "";
+  const filters = {
+    salonId,
+    status: "COMPLETED" as const,
+    from: normalizedDay,
+    to: normalizedDay,
+    employeeId,
+    page,
+    size: 25,
+  };
   const query = useQuery({
-    queryKey: ["sales", "daily-detail", salonId, normalizedDay, employeeId],
-    queryFn: () =>
-      listSales({
-        salonId,
-        status: "COMPLETED",
-        from: normalizedDay,
-        to: normalizedDay,
-        employeeId,
-      }),
+    queryKey: queryKeys.sales.list(filters),
+    queryFn: () => listSalesPaged(filters),
     enabled: Boolean(day && normalizedDay),
+    placeholderData: keepPreviousData,
+    staleTime: cacheTimes.transactionList,
   });
 
   return (
     <>
       <Dialog open={day != null} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Günlük satışlar</DialogTitle>
             <DialogDescription>
@@ -292,7 +301,7 @@ function DailySalesDialog({
             </DialogDescription>
           </DialogHeader>
           <DataTable
-            rows={query.data ?? []}
+            rows={query.data?.content ?? []}
             isLoading={query.isLoading}
             getRowId={(row) => row.id}
             empty={
@@ -332,6 +341,13 @@ function DailySalesDialog({
                 ),
               },
             ]}
+          />
+          <PaginationControls
+            page={query.data?.page ?? page}
+            totalPages={query.data?.totalPages ?? 0}
+            totalElements={query.data?.totalElements ?? 0}
+            isFetching={query.isFetching}
+            onPageChange={setPage}
           />
         </DialogContent>
       </Dialog>
